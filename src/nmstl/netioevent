@@ -1,0 +1,575 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+/*
+  Michael Reithinger (2004):
+
+   This file was modified for better support of fex:
+   - introduce all_written method in net_handler
+*/ 
+
+
+#ifndef NMSTL_H_NETIOEVENT
+#define NMSTL_H_NETIOEVENT
+
+/** \file
+ * Handlers for network streams and messages.
+ */
+
+#include <nmstl/internal.h>
+#include <nmstl/net>
+#include <nmstl/ioevent>
+#include <nmstl/thread>
+#include <nmstl/serial>
+#include <iostream>
+
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <cerrno>
+
+NMSTL_NAMESPACE_BEGIN;
+
+#ifndef DOXYGEN_SKIP
+class __nmstl_tcp_acceptor_noarg {};
+#endif
+
+/**
+ * A service which creates a server socket on a local port and waits
+ * for connections.
+ *
+ * Whenever a connection is accepted, a handler of type T, the first
+ * template argument, is constructed.  Each acceptor may have an
+ * arbitrarily-typed argument (of type Arg, the second template
+ * argument) which is passed to all the handlers on construction.
+ * tcp_acceptor constructs handlers like this:
+ *
+ * \code
+ * new T(loop, sock, arg);
+ * \endcode
+ *
+ * where <i>loop</i> is the event loop that this acceptor is bound to,
+ * <i>sock</i> is a TCP socket object, and <i>arg</i> is the arbitrary
+ * argument passed to the constructor.
+ *
+ * If no such argument is required, then omit the second template
+ * argument; tcp_acceptor will then construct handlers like this:
+ *
+ * \code
+ * new T(loop, sock);
+ * \endcode
+ *
+ * A typical usage pattern, in which all the server handlers need
+ * access to some dispatcher object that manages global state, is as
+ * follows:
+ *
+ * \code
+ * class MyDispatcher { ... };
+ *
+ * class MyServerHandler : public io_handler {
+ *   public:
+ *     MyServerHandler(io_event_loop& loop, tcpsocket sock,
+ *                     MyDispatcher *disp) :
+ *         io_handler(loop, sock)
+ *     {
+ *         ...
+ *     }
+ * };
+ *
+ * typedef tcp_acceptor<MyServerHandler, MyDispatcher*> MyAcceptor;
+ *
+ * int main() {
+ *     static const unsigned int PORT = 8002;
+ *
+ *     MyDispatcher *dispatcher = new MyDispatcher;
+ *     io_event_loop loop;
+ *     MyAcceptor acceptor(loop, PORT, dispatcher);
+ *
+ *     loop.run();
+ *
+ *     return 0;
+ * }
+ * \endcode
+ *
+ */
+template<class T, class Arg = __nmstl_tcp_acceptor_noarg>
+class tcp_acceptor : private io_handler {
+    tcpsocket sock;
+
+    Arg arg;
+
+public:
+    /// Creates the service, 
+    tcp_acceptor(io_event_loop& _loop, in_port_t localport, Arg arg) :
+        io_handler(_loop), sock(inet_address(localport), socket::acceptor), arg(arg)
+    {
+        set_ioh(sock);
+        sock.set_blocking(false);
+        want_read(true);
+        INFO << "Accepting connections for " << to_string(typeid(T)) << " on port " << localport;
+    }
+    virtual ~tcp_acceptor() {}
+
+    // Import from io_handler
+    io_handler::set_loop;
+    io_handler::get_loop;
+    io_handler::is_owned;
+    io_handler::set_owned;
+    io_handler::get_ioh;
+    io_handler::set_ioh;
+
+private:
+    inline void ravail() {
+        address a;
+        tcpsocket ioh = sock.accept(a);
+        if (ioh) {
+            INFO << "Accepted a connection from " << ioh.getpeername();
+            T* t = new T(*get_loop(), ioh, arg);
+            t->set_owned(false);
+        }
+    }
+};
+
+
+#ifndef DOXYGEN_SKIP
+template<class T>
+class tcp_acceptor<T, __nmstl_tcp_acceptor_noarg> : public io_handler {
+    tcpsocket sock;
+
+public:
+    /// Creates the service, 
+    tcp_acceptor(io_event_loop& _loop, in_port_t localport) :
+        io_handler(_loop), sock(inet_address(localport), socket::acceptor)
+    {
+        set_ioh(sock);
+        sock.set_blocking(false);
+        want_read(true);
+        INFO << "Accepting connections for " << to_string(typeid(T)) << " on port " << localport;
+    }
+    virtual ~tcp_acceptor() {}
+
+protected:
+    inline void ravail() {
+        address a;
+        tcpsocket ioh = sock.accept(a);
+        if (ioh) {
+            INFO << "Accepted a connection from " << ioh.getpeername();
+            T* t = new T(*get_loop(), ioh);
+            t->set_owned(false);
+        }
+    }
+};
+#endif
+
+
+/**
+ * A handler which buffers incoming and outgoing data.
+ *
+ * This is the handler which will be most commonly used to implement
+ * stream-oriented (as opposed to strictly message-oriented) services.
+ * Handlers should subclass the incoming_data(databuf) and
+ * end_data(databuf) methods to deal with input, and use the
+ * write(databuf) method to write data.
+ */
+template <class Lock = __nmstl_no_lock>
+class net_handler : private io_handler {
+    bool established;
+    Lock l;
+
+protected:
+    net_handler(io_event_loop& loop, iohandle ioh, bool established = false) :
+        io_handler(loop)
+    {
+	set_socket(ioh, established);
+    }
+
+    net_handler(io_event_loop& loop) :
+        io_handler(loop), established(false)
+    {
+    }
+
+    virtual ~net_handler() {}
+
+    /// Invoked when the connection either succeeds or fails.
+    ///
+    /// @param stat a status code indicating whether the connection
+    ///    attempt was successful
+    virtual void connected(status stat) {}
+
+    /// Invoked whenever bytes are newly available on the stream.
+    ///
+    /// @param buf all available data that has not yet been consumed.
+    /// @return the number of bytes which the subclass has consumed
+    ///     (and should be removed from the front of the buffer).
+    virtual int incoming_data(constbuf buf) = 0;
+
+    /// Invoked when the peer has closed the stream for writing.
+    ///
+    /// @param buf all available data that has not yet been consumed.
+    virtual void end_data(constbuf buf) {}
+
+
+  virtual void all_written() {}
+
+public:
+    // Import from io_handler
+    io_handler::set_loop;
+    io_handler::get_loop;
+    io_handler::is_owned;
+    io_handler::set_owned;
+
+
+    /// Writes data out, buffering any data that cannot be written
+    /// immediately.
+    bool write(constbuf buf) {
+        locking_T (l, Lock) {
+            const void *data = buf.data();
+            unsigned int length = buf.length();
+
+            if (established && length > 0 && wbuf.empty()) {
+                // Write as much as we can
+                int written = ::send(get_ioh().get_fd(), data, length, MSG_DONTWAIT | MSG_NOSIGNAL);
+                if (written > 0) {
+                    data = static_cast<const char *>(data) + written;
+                    length -= written;
+                }
+                if (written < 0 && errno != EAGAIN)
+                    return false;
+            }
+
+            if (length > 0) {
+                wbuf.append(static_cast<const char *>(data), length);
+                want_write(true);
+            }
+        }
+
+        return true;
+    }
+
+    size_t write_bytes_pending() const {
+      return wbuf.size();
+    }
+
+    bool write(string s) {
+	return write(constbuf(s));
+    }
+
+    /// Returns the socket for this handler.
+    socket get_socket() { return socket(get_ioh()); }
+
+    /// Sets the socket for this handler.
+    void set_socket(socket ioh, bool established = false) {
+	set_ioh(ioh);
+	this->established = ioh && established;
+
+	if (this->established && ioh.stat()) {
+	    want_read(true);
+	    want_write(rbuf.length() != 0);
+	} else if (ioh) {
+	    want_read(false);
+	    want_write(true);
+	}
+    }
+
+    /// Returns true if connected.
+    bool is_connected() { return get_socket().getpeername(); }
+
+private:
+    string rbuf, wbuf;
+
+    void ravail() {
+        char buf[512];
+        int bytes = recv(get_ioh().get_fd(), buf, sizeof buf, MSG_DONTWAIT);
+
+        if (bytes == 0 || (bytes < 0 && errno != EAGAIN)) {
+            want_read(false);
+            end_data(constbuf(rbuf));
+            if (!is_owned()) delete this;
+            return;
+        }
+
+        if (bytes > 0) {
+            rbuf.append(buf, bytes);
+            unsigned int consumed = incoming_data(constbuf(rbuf));
+
+            if (consumed > 0) {
+                assert(consumed <= rbuf.length());
+                rbuf.erase(0, consumed);
+            }
+        }
+    }
+
+    void wavail() {
+        locking_T (l, Lock) {
+            if (!established) {
+                established = true;
+
+                status stat = get_socket().stat();
+                connected(stat);
+                if (!stat) {
+		    want_write(false);
+                    return;
+		}
+
+                want_read(true);
+            }
+
+            const char *p = wbuf.data();
+            int len = wbuf.length();
+
+            while (len > 0) {
+                int written = ::send(get_ioh().get_fd(), p, len, MSG_DONTWAIT | MSG_NOSIGNAL);
+                if (written == -1 && errno == EAGAIN) {
+                    wbuf.erase(0, wbuf.length() - len);
+                    want_write(true);
+                    return;
+                }
+
+                if (written <= 0) {
+                    want_write(false);
+                    if (!is_owned()) goto die;
+                }
+
+                p += written;
+                len -= written;
+            }
+
+            // len == 0, i.e., all written
+            want_write(false);
+            wbuf.erase();
+        }
+
+	if (wbuf.empty())
+	  all_written();
+
+        return;
+
+      die:
+        delete this;
+    }
+};
+
+/**
+ * A struct containing only an integer which may be used as a header
+ * for the msg_handler class.
+ */
+struct length_header {
+public:
+    unsigned int length;
+    NMSTL_SIMPLY_SERIALIZABLE(length_header, << length);
+};
+
+
+
+
+
+class omessage {
+    ptr<oserialstring> oss;
+
+  public:
+    omessage() :
+	oss(new oserialstring(oserial::binary | oserial::nosignature))
+    {
+    }
+
+    template <class T>
+    omessage operator << (const T& t) {
+	(*oss) << t;
+	return *this;
+    }
+
+    string str() const { return oss->str(); }
+    const char *data() const { return oss->str().data(); }
+    unsigned int length() const { return oss->str().length(); }
+
+    operator constbuf() const { return constbuf(oss->str()); }
+};
+
+class imessage {
+    ptr<iserialdata> isd;
+
+  public:
+    imessage(constbuf buf) :
+	isd(new iserialdata(buf, iserial::binary))
+    {
+    }
+
+    template <class T>
+    imessage operator >> (T& t) {
+	(*isd) >> t;
+	return *this;
+    }
+
+    operator const void*() const {
+	return *isd;
+    }
+};
+
+
+
+/**
+ * A handler which reads and writes messages, each with a fixed-size
+ * message described by the struct Header.  Header must have a public
+ * length field allowing the payload length to be get/set.
+ *
+ * Handlers should override connected (inherited from net_handler);
+ * incoming_message(const Header&, databuf) to read messages; and
+ * end_messages(unsigned int) to be notified of stream closure.
+ *
+ */
+template <class Header = length_header, class Lock = __nmstl_no_lock>
+class msg_handler : private net_handler<Lock> {
+protected:
+    msg_handler(io_event_loop& loop, iohandle ioh, bool established = false) :
+        net_handler<Lock>(loop, ioh, established) {}
+
+    msg_handler(io_event_loop& loop) :
+        net_handler<Lock>(loop) {}
+
+    virtual ~msg_handler() {}
+
+    /// Invoked when a complete message has been received.
+    ///
+    /// @param head the message header.
+    /// @param buf the message payload.
+    virtual void incoming_message(const Header& head, constbuf buf) = 0;
+
+    /// Invoked when the stream has been closed for reading,
+    /// i.e., there cannot possibly be more incoming messages.
+    ///
+    /// @param remaining the number of bytes left in the input buffer
+    ///     but not belonging to a message (should be 0 if the stream
+    ///     was closed cleanly).
+    virtual void end_messages(unsigned int remaining) {}
+
+
+    virtual void all_written() {}
+
+public:
+    // Import from io_handler
+    net_handler<Lock>::set_loop;
+    net_handler<Lock>::get_loop;
+    net_handler<Lock>::is_owned;
+    net_handler<Lock>::set_owned;
+    net_handler<Lock>::get_socket;
+    net_handler<Lock>::set_socket;
+    net_handler<Lock>::connected;
+    net_handler<Lock>::is_connected;
+    net_handler<Lock>::write_bytes_pending;
+
+    /// Populates the header with the payload length and writes a message.
+    bool write(Header& head, const omessage& p) {
+        head.length = p.length();
+        return write_asis(head, p);
+    }
+
+    /// Populates the header with the payload length and writes a message.
+    bool write(Header& head, constbuf payload) {
+        head.length = payload.length();
+        return write_asis(head, payload);
+    }
+
+    /// Copies the header, populates it with the payload length, and writes a message.
+    bool write(const Header& head, const omessage& p) {
+	Header head2 = head;
+        head2.length = p.length();
+        return write_asis(head2, constbuf(p.data(), p.length()));
+    }	
+
+    /// Populates the header with the payload length and writes a message.
+    bool write(const Header& head, constbuf payload) {
+	Header head2 = head;
+        head2.length = payload.length();
+        return write_asis(head2, payload);
+    }
+
+    /// Writes a message with no payload.
+    bool write(const Header& head) {
+        Header head2 = head;
+	head2.length = 0;
+        return write_asis(head2, constbuf());
+    }
+
+    /// Writes a message with a default-constructed header.
+    bool write(constbuf payload) {
+        Header head;
+        return write(head, payload);
+    }
+
+    /// Writes a message with a default-constructed header.
+    bool write(string payload) {
+        Header head;
+        return write(head, constbuf(payload));
+    }
+
+    /// Writes a message without setting the payload length (use this
+    /// only if the payload length is known to have been set properly).
+    bool write_asis(const Header& p, constbuf payload) {
+        ASSERT(p.length == payload.length());
+
+	oserialstring ser(oserial::binary | oserial::nosignature);
+	ser << p;
+
+        if (!net_handler<Lock>::write(ser.str())) return false;
+	if (payload) return net_handler<Lock>::write(payload);
+
+        return true;
+    }
+
+private:
+    void end_data(constbuf buf) {
+        end_messages(buf.length());
+    }
+
+    int incoming_data(constbuf buf) {
+        const void *data = buf.data();
+        unsigned int length = buf.length();
+
+        unsigned int orig_length = length;
+
+	Header header;
+
+        while (length) {
+	    iserialdata ip(constbuf(data, length), iserial::binary);
+	    if (!(ip >> header)) {
+		break;
+	    }
+
+	    constbuf d = ip.remainder();
+	    if (d.length() < header.length) {
+                break;
+	    }
+
+            incoming_message(header, constbuf(d.data(), header.length));
+
+            // Consume the message
+	    length -= ip.pos() + header.length;
+            data = static_cast<const char *>(d.data()) + header.length;
+        }
+
+        return orig_length - length;
+    }
+};
+
+NMSTL_NAMESPACE_END;
+
+#endif

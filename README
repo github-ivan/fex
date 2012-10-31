@@ -1,0 +1,71 @@
+fex (file exchange daemon) is a replicating filesystem for
+disconnected computers similar to intermezzo (and not so similar to
+coda). The main design goal for fex was to provide a system which is
+easy to install and configure. Some Features of fex are
+
+   * fex does not need a kernel module, it works with every filesystem
+
+   * fex uses a very simple conflict resolving mechanism (see the
+   * manual page fexd(8))
+
+   * fex supports ssh tunneling for connections over the internet
+
+   * fex uses rsync for replicating large files
+
+   * fex adapts to the network speed, and uses compression if
+   * neccessary
+
+   * fex runs as a peer to peer system. It can act as server and
+   * client.
+
+fex uses the marvelous nmstl library (http://nmstl.sourceforge.net/).
+The files in the nmstl, and nmstl_src folders are modified for fex.
+
+	 
+
+>> Requirements
+To build fex you will need:
+ 
+  * gcc
+
+  * make
+
+  * librsync (available under http://librsync.sourceforge.net/)
+
+  * libconfuse (available under http://www.nongnu.org/confuse/)
+
+  * log4cpp (available under http://log4cpp.sourcforge.net/)
+
+  * zlib (available under http://www.gzip.org/zlib/)
+
+
+>> Compiling
+
+To build and install fex from the extracted distribution do;
+
+  $ ./configure
+  $ make all
+  $ make install
+  
+
+
+>> Platforms
+
+fex is known to run on:
+
+Linux
+
+
+>> Recommendation
+
+Before Running fexd as an daemon, test its configuration with the 
+fexd -d -d -d command.
+
+>> Warning
+
+fex was carefully tested und runs in serveral productive environments. However you should
+always backup your data regularly.
+
+
+
+

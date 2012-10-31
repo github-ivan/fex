@@ -1,0 +1,16 @@
+This package was debianized by Michael Reithinger <mreithinger@web.de> on
+Fri,  3 Sep 2004 12:55:28 +0200.
+
+Software was updated by Krisztian Ivancso <github-ivan@ivancso.net> to
+compile on gcc-4.4.3.
+
+Upstream Author(s): Michael Reithinger <mreithinger@web.de>
+
+Copyright:
+
+This software is copyright (c) 2004 by Michael Reithinger
+
+You are free to distribute this software under the terms of
+the GNU General Public License.
+On Debian systems, the complete text of the GNU General Public
+License can be found in the file `/usr/share/common-licenses/GPL'.

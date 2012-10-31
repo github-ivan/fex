@@ -1,0 +1,123 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_RPC
+#define NMSTL_H_RPC
+
+#include <nmstl/internal.h>
+#include <nmstl/callback>
+
+NMSTL_NAMESPACE_BEGIN;
+
+template<class T>
+class result
+{
+public:
+    typedef callback< bool > waiter_type;
+    typedef callback< void, result<T>* > callback_type;
+
+private:
+    struct rep {
+        bool ready;
+        bool success;
+        waiter_type waiter;
+        T val;
+        listeners< result<T>* > lsn;
+
+        rep(waiter_type waiter = waiter_type()) :
+            ready(false), success(false), waiter(waiter), val(T()) {}
+        ~rep() {
+            if (!ready) {
+                // Deleted last reference without ever posting!
+                // Post failure.
+                result(this).post();
+            }
+        }
+    };
+    friend class rep;
+
+    ptr<rep> my_rep;
+
+protected:
+    // Used for posting failure when a rep dies
+    result(rep *r) { my_rep = ptr<rep>::unowned(r); }
+
+public:
+    result() {}
+    result(waiter_type waiter) : my_rep(new rep(waiter)) {}
+
+    bool ready() { return my_rep->ready; }
+    bool success() { return my_rep->ready && my_rep->success; }
+
+    T wait() {
+        while (!my_rep->ready)
+            if (!my_rep->waiter()) {
+                // Failure
+                my_rep->ready = true;
+                break;
+            }
+
+        return my_rep->val;
+    }
+
+    // valid only if ready!
+    T operator *() const {
+        ASSERT(my_rep->ready);
+        return my_rep->val;
+    }
+
+    // valid only if ready!
+    T* operator ->() const {
+        ASSERT(my_rep->ready);
+        return &my_rep->val;
+    }
+
+    result<T>& add(callback_type cb) {
+        my_rep->lsn.add(cb);
+        return *this;
+    }
+
+    result<T>& remove(callback_type cb) {
+        my_rep->lsn.remove(cb);
+        return *this;
+    }
+
+    void set(const T& t) {
+        my_rep->success = true;
+        my_rep->val = t;
+    }
+
+    void post() {
+        my_rep->ready = true;
+        my_rep->lsn.post(this);
+    }
+
+    void post(const T& t) {
+        my_rep->ready = true;
+        my_rep->val = t;
+        my_rep->lsn.post(this);
+    }
+};
+
+NMSTL_NAMESPACE_END;
+
+#endif

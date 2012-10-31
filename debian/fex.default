@@ -1,0 +1,14 @@
+# Defaults for fex initscript
+# sourced by /etc/init.d/fex
+# installed at /etc/default/fex by the maintainer scripts
+
+#
+# This is a POSIX shell fragment
+#
+
+# Additional options that are passed to the Daemon.
+DAEMON_OPTS=""
+
+# if fexd  has to work with the dnotify-mechnism, adjust the maximum 
+# off open directories
+#MAX_DIRS=8192

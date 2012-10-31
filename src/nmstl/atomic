@@ -1,0 +1,104 @@
+
+#ifndef NMSTL_H_ATOMIC
+#define NMSTL_H_ATOMIC
+
+#if defined(__GLIBCPP__) && __GLIBCPP__ >= 20020814
+#  include <bits/atomicity.h>
+#else
+
+// Routine from STL: bits/atomicity.h.  Currently for
+// i386 only.
+
+typedef int _Atomic_word;
+
+static inline _Atomic_word 
+__attribute__ ((__unused__))
+__exchange_and_add (volatile _Atomic_word *__mem, int __val)
+{
+  register _Atomic_word __result;
+  __asm__ __volatile__ ("lock; xaddl %0,%2"
+			: "=r" (__result) 
+                        : "0" (__val), "m" (*__mem) 
+                        : "memory");
+  return __result;
+}
+
+static inline void
+__attribute__ ((__unused__))
+__atomic_add (volatile _Atomic_word* __mem, int __val)
+{
+  __asm__ __volatile__ ("lock; addl %0,%1"
+			: : "ir" (__val), "m" (*__mem) : "memory");
+}
+
+#endif
+
+NMSTL_NAMESPACE_BEGIN;
+
+// Atomic int for i386; "borrowed" from libstdc++
+
+/**
+ * An atomic integer class.  Useful for threadsafe smart pointers
+ * (and probably other stuff too).
+ *
+ * Currently implemented in terms of the __exchange_and_add and
+ * __atomic_add functions in libstdc++.
+ */
+class atomic {
+    typedef _Atomic_word word;
+    word val;
+
+  public:
+    /// Constructs an atomic integer with a given initial value.
+    atomic(int val = 0) : val(val) {}
+
+    /// Atomically increases the value of the integer and returns its
+    /// old value.
+    inline word exchange_and_add(int addend) {
+        return __exchange_and_add(&val, addend);
+    }
+
+    /// Atomically increases the value of the integer.
+    inline void add(int addend) {
+        __atomic_add(&val, addend);
+    }
+
+    /// Atomically increases the value of the integer.
+    inline void operator += (int addend) {
+        add(addend);
+    }
+
+    /// Atomically decreases the value of the integer.
+    inline void operator -= (int addend) {
+        add(-addend);
+    }
+
+    /// Atomically increments the value of the integer.
+    inline void operator ++ () {
+        add(1);
+    }
+
+    /// Atomically decrements the value of the integer.
+    inline void operator -- () {
+        add(-1);
+    }
+
+    /// Atomically increments the value of the integer and returns its
+    /// old value.
+    inline int operator ++ (int) {
+        return exchange_and_add(1);
+    }
+
+    /// Atomically decrements the value of the integer and returns its
+    /// old value.
+    inline int operator -- (int) {
+        return exchange_and_add(-1);
+    }
+
+    /// Returns the value of the integer.
+    operator int() const { return val; }
+};
+
+NMSTL_NAMESPACE_END;
+
+#endif

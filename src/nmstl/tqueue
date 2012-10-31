@@ -1,0 +1,200 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_TQUEUE
+#define NMSTL_H_TQUEUE
+
+/** \file
+ * Threadsafe queues.
+ */
+
+#include <nmstl/internal.h>
+#include <nmstl/thread>
+#include <nmstl/debug>
+
+#include <queue>
+
+NMSTL_NAMESPACE_BEGIN;
+
+/**
+ *
+ * A threadsafe queue class much like an STL queue.
+ *
+ */
+template<class T>
+class tqueue {
+  private:
+    queue<T> q;
+    mutable mutex m;
+    condition c;
+
+    bool closed;
+    unsigned int waiters;
+    unsigned int waiters_starve;
+    
+    // No copying
+    tqueue(const tqueue<T> &);
+    tqueue<T>& operator = (const tqueue<T> &);
+
+  public:
+    /// The type of datum stored in the queue.
+    typedef typename queue<T>::value_type value_type;
+
+    /// The type used to represent the size of the queue.
+    typedef typename queue<T>::size_type size_type;
+
+    /// Constructor.
+    tqueue() : closed(false), waiters(0), waiters_starve(0) {}
+
+    /// Returns true if the queue is empty.
+    bool empty() const { locking(m) return q.empty(); }
+
+    /// Returns the number of items in the queue.
+    size_type size() const { locking(m) return q.size(); }
+
+    /// Returns the item at the head of the queue (least recently pushed).
+    value_type& front() { locking(m) return q.front(); }
+
+    /// Returns the item at the head of the queue (least recently pushed).
+    const value_type& front() const { locking(m) return q.front(); }
+
+    /// Returns the item at the tail of the queue (most recently pushed).
+    value_type& back() { locking(m) return q.back(); }
+
+    /// Returns the item at the tail of the queue (most recently pushed).
+    const value_type& back() const { locking(m) return q.back(); }
+
+    /// Adds an item to the back of the queue.  Returns true if the item
+    /// will be immediately dispatched.
+    bool push(const value_type& v) {
+	locking(m) {
+	    q.push(v);
+            c.signal();
+            return waiters >= q.size();
+	}
+    }
+
+    /// Removes an item from the front of the queue.
+    void pop() { locking(m) q.pop(); }
+
+    /// Returns and removes an item from the front of the queue.
+    T get() {
+        locking (m) {
+            if (empty()) return T();
+
+            T ret = front();
+            pop();
+            return ret;
+        }
+    }
+
+    /// Waits for the queue to become non-empty, then atomically
+    /// retrieves an item from the queue, sets out, and returns true; or
+    /// returns false if the queue has been closed.
+    bool wait(T& out, bool *pending = 0) {
+	locking(m) {
+	    if (pending && *pending) {
+		--waiters;
+		*pending = false;
+	    }
+
+	    while (1) {
+		if (waiters_starve) {
+		    --waiters_starve;
+
+		    // Because starve decremented waiters, and we
+		    // decremented it again in this loop...
+		    ++waiters;
+
+		    return false;
+		}
+
+		if (!q.empty()) {
+		    out = q.front();
+		    q.pop();
+		    return true;
+		}
+
+		if (closed)
+		    return false;
+
+                // Can only get to this point if the queue is empty
+                // but has not been closed.
+
+		++waiters;
+		c.wait(m);
+		--waiters;
+	    }
+	}
+    }
+
+    void waiter_pending() {
+	locking(m)
+	    ++waiters;
+    }
+
+
+    /// Closes the queue so all pending and future calls to wait()
+    /// will return immediately.
+    void close() {
+	locking (m) {
+	    closed = true;
+	    c.broadcast();
+	}
+    }
+
+    /// Starves one waiter, causing its "wait" to return false.
+    void starve() {
+	locking (m) {
+	    ++waiters_starve;
+	    --waiters;
+	    c.signal();
+	}
+    }
+
+    /// Is the queue closed?
+    bool is_closed() {
+	locking (m)
+	    return closed;
+    }
+
+    /// Returns the number of waiters on the thread.
+    unsigned int count_waiters() {
+	locking (m)
+	    return waiters;
+    }
+
+    /// Returns the number of threads currently waiting on the queue
+    /// (or zero if none) minus the number of elements waiting in the
+    /// queue.
+    ///
+    /// Returns a positive number if there is an "overflow" of waiters,
+    /// and a negative number if there is an "underflow" of waiters.
+    int extra_capacity() {
+	locking (m)
+	    return int(waiters) - int(waiters_starve) - int(q.size());
+    }
+};
+
+NMSTL_NAMESPACE_END;
+
+#endif /* NMSTL_H_TQUEUE */

@@ -1,0 +1,333 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_PTR
+#define NMSTL_H_PTR
+
+#ifdef NMSTL_PTR_TRACE
+#include <cstdarg>
+#endif
+
+#include <nmstl/thread>
+#include <nmstl/atomic>
+
+NMSTL_NAMESPACE_BEGIN;
+
+#ifndef DOXYGEN_SKIP
+#ifdef NMSTL_PTR_TRACE
+
+inline void ptr_trace_debug(const char *fmt, ...) {
+    static bool init = false;
+    static FILE *file = 0;
+
+    if (!init) {
+        init = true;
+        if (getenv("NMSTL_PTR_TRACE") != 0) {
+            char ch[128];
+            sprintf(ch, "ptr_trace.%d", getpid());
+            file = fopen(ch, "w");
+        }
+    }
+    if (file) {
+        va_list ap;
+        va_start(ap, fmt);
+        vfprintf(file, fmt, ap);
+        fprintf(file, "\n");
+        va_end(ap);
+        fflush(file);
+    }
+}
+
+void check_ptr_count();
+
+inline int& ptr_count() {
+    static int count = 0;
+    static bool init = false;
+
+    if (!init) {
+        init = true;
+        atexit(check_ptr_count);
+    }
+
+    return count;
+}
+
+inline void check_ptr_count() {
+    if (ptr_count() != 0)
+        ERROR << ptr_count() << " ptr objects left dangling";
+}
+#endif
+#endif
+
+
+
+    
+
+/**
+ * A threadsafe reference-counting smart pointer class.
+ *
+ * When a ptr<T> object is first created from a pointer of type T*,
+ * a new reference count is created and initialized to one.  Whenever
+ * a copy of this smart pointer is made, the reference count is
+ * shared with the new copy and incremented.  Whenever a copy is
+ * deleted, the reference count is decremented; when it reaches zero,
+ * the underlying object is deleted.
+ *
+ * Using the static ptr<T>::unowned() method, a ptr can also be
+ * created with a reference count of 0, in which case the underlying
+ * pointer is considered <i>unowned</i> and is never implicitly
+ * deallocated and the reference count is never changed.
+ */
+template<typename T>
+class ptr {
+    // cnt is the number of existing references to rep, not including
+    // this one.  If we do a *postfix* decrement on cnt and the result
+    // is 0, we should delete it because there are no more objects
+    // remaining.  The "reference count" referred to in the documentation
+    // is actually *cnt + 1; if the reference count is unowned (0),
+    // then cnt is a null pointer.
+    atomic *cnt;
+    T      *rep;
+
+    void acquire() {
+        if (cnt)
+            ++*cnt;
+    }
+    void release() {
+        if (cnt && (*cnt)-- == 0) {
+#ifdef NMSTL_PTR_TRACE
+            const char *type = typeid(*rep).name();
+            ptr_trace_debug("Deleting %s %p", type, rep);
+#endif
+            delete cnt;
+            delete rep;
+#ifdef NMSTL_PTR_TRACE
+            ptr_trace_debug("Deleted %s %p", type, rep);
+            --ptr_count();
+#endif
+        }
+        rep = 0;
+        cnt = 0;
+    }
+
+    template<typename T2>
+    ptr(T2* rep, atomic* cnt) : cnt(rep ? cnt : 0), rep(rep) { acquire(); }
+
+public:
+    /// Constructs an empty pointer.
+    ptr() : cnt(0), rep(0) {}
+
+    /// Constructs a new smart pointer.  The parameter must be assignable
+    /// to T (e.g., T2 is a subclass of T).
+    template<typename T2>
+    explicit ptr(T2* p) : cnt(p ? new atomic : 0), rep(p) {
+#ifdef NMSTL_PTR_TRACE
+        if (p) {
+            ++ptr_count();
+            ptr_trace_debug("Created %s %p", typeid(*p).name(), p);
+        }
+#endif
+    }
+
+    /// Copies a smart pointer, incrementing its reference count.
+    ptr(const ptr& p) : cnt(p.cnt), rep(p.rep) {
+        //        DEBUG << "ptr<" << typeid(T).name() << "> CC: p.rep is " << (void*)(p.rep) << "; p.cnt is " << (void*)(p.cnt);
+        acquire();
+    }
+
+    /// Copies a smart pointer, incrementing its reference count.
+    /// The parameter's pointer type must be assignable to T (e.g.,
+    /// T2 is a subclass of T).
+    template<typename T2>
+    ptr(const ptr<T2>& p) : cnt(p.cnt), rep(p.rep) {
+        //        DEBUG << "ptr2<" << typeid(T).name() << "> CC: p.rep is " << (void*)(p.rep) << "; rep is " << (void*)(rep);
+        acquire();
+    }
+
+    /// Clears this smart pointer (decreasing the reference count
+    /// and deleting the underlying pointer if necessary) and assigns
+    /// to it a new pointer, incrementing its reference count.
+    ptr<T>& operator = (const ptr<T>& p) {
+        release();
+        cnt = p.cnt;
+        rep = p.rep;
+        acquire();
+        return *this;
+    }
+
+    /// Destructor.  Clears this smart pointer, decreasing the
+    /// reference count (unless the pointer is unowned) and deleting
+    /// the underlying pointer if the reference count reaches 0.
+    ~ptr() {
+        release();
+    }
+
+    /// Clears this smart pointer (decreasing the reference count
+    /// and deleting the underlying pointer if necessary) and assigns
+    /// to it a new pointer, incrementing its reference count.
+    /// The parameter's pointer type must be assignable to T (e.g.,
+    /// T2 is a subclass of T).
+    template<typename T2>
+    ptr<T>& operator = (const ptr<T2>& p) {
+        release();
+        cnt = p.cnt;
+        rep = p.rep;
+        acquire();
+        return *this;
+    }
+
+    /// Clears this smart pointer (decreasing the reference count
+    /// and deleting the underlying pointer if necessary) and assigns
+    /// to it a new pointer, incrementing its reference count.
+    /// The parameter's pointer type must be assignable to T (e.g.,
+    /// T2 is a subclass of T).
+    void set(T* p) {
+        release();
+        cnt = p ? new atomic : 0;
+        rep = p;
+
+        //        DEBUG << "ptr set; cnt is " << ((void*)(cnt)) << "; rep is " << ((void*)(rep));
+
+#ifdef NMSTL_PTR_TRACE
+        if (p) {
+            ++ptr_count();
+            ptr_trace_debug("Created %s %p", typeid(*p).name(), p);
+        }
+#endif
+    }
+
+    /// Statically casts the ptr to type T2, returning the resultant
+    /// smart pointer (sharing and incrementing this object's
+    /// reference count).
+    template<typename T2>
+    ptr<T2> static_cast_to() {
+        return ptr<T2>(  static_cast<T2*>(rep), cnt  );
+    }
+
+    /// Dynamically casts the ptr to type T2, returning the resultant
+    /// smart pointer (sharing this object's reference count).  If
+    /// a T* cannot be cast to a T2*, then a null smart pointer is
+    /// returned and this object's reference count is <i>not</i>
+    /// incremented.
+    template<typename T2>
+    ptr<T2> dynamic_cast_to() {
+        return ptr<T2>(  dynamic_cast<T2*>(rep), cnt  );
+    }
+
+    // Operators ==, !=, etc.
+    NMSTL_ARITH_OPS_T1(T2, ptr<T2>, rep);
+
+    /// Returns a null pointer if this smart pointer is null,
+    /// or a non-null pointer if non-null.   Useful primarily
+    /// for implicitly casting to a boolean, e.g.:
+    ///
+    /// <pre>
+    /// ptr<foo> p = ...;
+    /// if (p) { ... }
+    /// </pre>
+    operator const void*() const { return rep; }
+
+    /// Returns a reference to the underlying object.  Fails
+    /// via a run-time assertion if this smart pointer is null.
+    T& operator*() const {
+        ASSERT(rep);
+        return *rep;
+    }
+
+    /// Returns a pointer to the underlying object.  Fails
+    /// via a run-time assertion if this smart pointer is null.
+    T* operator->() const {
+        ASSERT(rep);
+        return rep;
+    }
+
+    /// Returns a pointer to the underlying object.
+    T* get() const {
+        return rep;
+    }
+
+    /// Returns a represntation useful for debugging.
+    string debug_repr() const {
+        return "ptr{" + to_string( (void*)(rep) ) + "," + to_string( (void*)(cnt) ) + "}";
+    }
+
+    /// Creates an unowned pointer with no reference count.
+    static ptr<T> unowned(T* t) { return ptr<T>(t, 0); }
+
+    /// Clears this pointer.  Equivalent to *this = ptr<T>().
+    void reset() {
+        release();
+    }
+
+    /// Returns the reference count of this pointer, as
+    /// described in the overview.
+    long use_count() { return cnt ? *cnt + 1 : 0; }
+
+    /// Returns true if this smart pointer contains the only
+    /// reference to the underlying pointer.  Equivalent to
+    /// use_count() == 1.
+    bool unique() { return use_count() == 1; }
+
+    /// Returns a string representation of the pointer.
+    string as_string() const {
+        if (*this)
+            return "&{" + to_string(*get()) + "}";
+        else
+            return "NULL";
+    }
+
+    template<typename T2>
+    friend class ptr;
+};
+
+
+template<typename T1>
+inline string to_string(const ptr<T1>& t) {
+    return t.as_string();
+}
+template<typename T1>
+inline ostream& operator << (ostream& out, const ptr<T1>& t) {
+    return out << t.as_string();
+}
+
+/// Statically casts a ptr of type T2 to type T1, returning the
+/// resultant smart pointer (sharing this object's reference count).
+template<typename T1, typename T2>
+inline ptr<T1> static_cast_ptr(ptr<T2>& p2)
+{
+    return p2.template static_cast_to<T1>();
+}
+
+/// Dynamically casts a ptr of type T2 to type T1, returning the
+/// resultant smart pointer (sharing this object's reference count).
+/// If a T2* cannot be cast to a T1*, then a null smart pointer is
+/// returned and the object's reference count is <i>not</i>
+/// incremented.
+template<typename T1, typename T2>
+inline ptr<T1> dynamic_cast_ptr(ptr<T2>& p2)
+{
+    return p2.template dynamic_cast_to<T1>();
+}
+
+NMSTL_NAMESPACE_END;
+
+#endif

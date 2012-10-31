@@ -1,0 +1,1150 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_SERIAL
+#define NMSTL_H_SERIAL
+
+#include <nmstl/internal.h>
+#include <nmstl/io>
+#include <iostream>
+#include <string>
+#include <vector>
+#include <map>
+#include <set>
+
+/** \file
+ * Object serialization.
+ */
+
+
+NMSTL_NAMESPACE_BEGIN;
+
+/**
+ *
+ * An oserial is analogous to an ObjectOutputStream in Java.  To serialize
+ * objects:
+ *
+ * <ol>
+ *   <li>Create an ostream object.
+ *   <li>Create an oserial object pointing to that ostream.
+ *   <li>Write objects to the oserial object using the << operator.
+ * </ol>
+ *
+ * You can write C++ primitives and STL containers to oserial objects.
+ * You can also serializers/deserialize objects you declare by using
+ * the NMSTL_SERIAL macro, as in the example below.
+ *
+ * There are three serialization modes (selectable in the second argument
+ * of the constructor).
+ *
+ * <ul>
+ *
+ * <li>In <b>typesafe mode</b>, oserial uses a verbose, human-readable
+ * output format which includes type names of objects.  When the
+ * output is later deserialized, iserial checks the type names to
+ * verify that data are being read into objects of the proper types.
+ *
+ * <li>In <b>binary mode</b>, oserial uses a compact, well-defined,
+ * non-human-readable, non-typesafe representation, defined
+ * recursively as follows.  This representation is stable and
+ * platform- and language-independent, so it can be read and written
+ * by any software (not just NMSTL) and can be used as the basis for
+ * simple file formats and protocols.  A Java implementation
+ * is provided in the <code>java</code> directory.
+ *
+ * <ul>
+ * <li>A scalar is serialized as an <i>n</i>-byte, network-order integer,
+ * where <i>n</i> is 1 for bool, 2 for short, 4 for int or long, and 8 for long long.
+ * <li>A string is serialized as a 4-byte, network-order length field,
+ * plus the contents of the string.
+ * <li>A pair<A, B> is serialized as A followed by B (e.g., a
+ * pair<short, string> is a two-byte integer, followed by a string [which is
+ * a four-byte length field followed by the string contents]).
+ * <li>An STL container is serialized as a four-byte integer which is the
+ * number of elements in the container, followed by the serialization of
+ * each element of the container.
+ * <li>An arbitrary object <code>T</code> is serialized according to
+ * its <code>freeze</code> method, which generally writes the class's instance
+ * variables in order.
+ * <li>A ptr<T> is serializable only if T has uses the serialization
+ * facility described in <i>Serialization and inheritance</i>, below.
+ * First a 1-byte boolean value is written, 0 if the pointer
+ * is null or 1 if not.  If the pointer is non-null,
+ * the typeid of the actual object is written (e.g., 200 for <code>car</code>s
+ * below); then the object is serialized as per its <code>freeze</code> method.
+ * </ul>
+ *
+ * <li>In <b>compact mode</b>, oserial uses an even more compact
+ * representation using variable-length integer fields.
+ *
+ * </ul>
+ *
+ * <h2>Serialization and inheritance</h2>
+ *
+ * Normally you will serialize and deserialize objects by <i>value</i>,
+ * just as objects are read from and written to iostreams by value.
+ * For instance, to read an integer, use
+ *
+ * \code
+ * int x = ...;
+ * oserialstring out;
+ * out << x;  // Not &x
+ *
+ * iserialstring in( out.str() );
+ * in >> x;   // Not &x
+ * \endcode
+ *
+ * However, this won't quite work for hierarchies of objects.  For
+ * instance: if <code>car</code> and <code>truck</code> both derive from a common
+ * superclass, <code>automobile</code>, then you can't read a serialized
+ * <code>truck</code> into a generic <code>automobile</code> object: in C++ types
+ * of objects cannot be fixed.
+ *
+ * \code
+ * car buick("BUICK");
+ * oserialstring oss;
+ * oss << buick;
+ *
+ * automobile aut;
+ * iserialstring iss(oss.str());
+ * iss >> aut; // Serialization error!  Can't change type of aut to car at runtime
+ * \endcode
+ * 
+ * Fortunately, NMSTL provides a facility for read and writing
+ * objects of arbitrary type via pointers, so that when you write any sort of
+ * <code>automobile</code> object, the serializer for the actual
+ * type of the object (<code>car</code>) is invoked, and when you read any
+ * sort of <code>automobile</code> object back in, the correct subtype is
+ * automatically constructed and deserialized.
+ *
+ * To use this facility:
+ *
+ * <ul>
+ *
+ * <li>Pick a type which you will use to differentiate classes
+ * in the hierarchy (e.g., <code>long</code>).  This is called the
+ * <code>typeid_type</code> for the hierarchy.
+ *
+ * <li>Pick a unique value of this type, called a type-ID, for each
+ * class (e.g., 100, 200, and 300 for <code>automobile</code>,
+ * <code>car</code>, and <code>truck</code> respectively.
+ *
+ * <li>In the declaration for your base class <code><i>T</i></code>,
+ * use the <code>NMSTL_SERIAL_BASE(<i>T</i>, <i>typeid_type</i>,
+ * <i>fields</i>)</code>, e.g.:
+ *
+ * \code
+ * class automobile {
+ *   private:
+ *     int wheels;
+ *     double length;
+ *       ...
+ *     NMSTL_SERIAL_BASE(automobile, long, << wheels << length);
+ * };
+ * \endcode
+ *
+ * <li>In each subclass <code><i>U</i></code>, use the
+ * <code>NMSTL_SERIAL_SUBCLASS(<i>supertype</i>, <i>U</i>, <i>fields</i></code>)</code>
+ * macro, e.g.:
+ *
+ * \code
+ * class truck : public automobile {
+ *   private:
+ *     float gross_capacity;
+ *       ...
+ *     NMSTL_SERIAL_SUBCLASS(truck, automobile, << gross_capacity);
+ * };
+ * \endcode
+ *
+ * <li>For each class <code>T</code> with an <code>NMSTL_SERIAL_BASE</code> or
+ * <code>NMSTL_SERIAL_SUBCLASS</code>,
+ * put a <code>NMSTL_SERIAL_DEFINE(<i>T</i>, <i>the_typeid</i>)</code> in a
+ * <code>.cc</code> file, where <i>the_typeid</i> is the type-ID you selected
+ * for that class (100, 200, or 300 in this example).
+ *
+ * </ul>
+ *
+ * <h2>Example</h2>
+ *
+ * \code
+ * class my_class {
+ *   public:
+ *     int member1;
+ *     map< string, vector<int> > member2;
+ *
+ *     NMSTL_SERIAL(my_class, << member1 << member2);
+ * };
+ *
+ * int main() {
+ *     my_class obj;
+ *
+ *       ...
+ *
+ *     oserialstring out;
+ *     out << obj;
+ *
+ *       ...
+ *
+ *     // read it back in from the string
+ *     my_class obj2;
+ *     iserialstring in(out.str());
+ *     in >> obj2;
+ *     if (in)
+ *         cout << "Success!" << endl;
+ *     else
+ *         cout << "Failure (" << in.error() << ")!" << endl;
+ * }
+ * \endcode
+ *
+ * <h2>Example using containers</h2>
+ *
+ * \code
+ * map<int, string> my_map;
+ * my_map[1] = "ONE";
+ * my_map[2] = "TWO";
+ * my_map[3] = "THREE";
+ *
+ * oserialstring out1;
+ * out1 << my_map;
+ *
+ * // Writes:
+ * //   00 00 00 03    (number of elements)
+ * //   00 00 00 01    (key of first element)
+ * //   00 00 00 03    (length of first element data)
+ * //   4F 4E 45       ("ONE")
+ * //   00 00 00 02    (key of second element)
+ * //   00 00 00 03    (length of first element data)
+ * //   54 57 4F       ("TWO")
+ * //   00 00 00 03    (key of second element)
+ * //   00 00 00 05    (length of second element data)
+ * //   54 48 52 45 45 ("THREE")
+ *
+ * oserialstream out2;
+ * out2.serialize(my_map.begin(), my_map.end());
+ * // Writes exactly the same thing, except without the number
+ * // of elements.
+ * \endcode
+ *
+ * To deserialize out1 and out2:
+ *
+ * \code
+ * iserialstring in1(out1.str());
+ * map<int, string> my_new_map_1;
+ * in1 >> my_new_map_1;
+ *
+ * iserialstring in2(out2.str());
+ * map<int, string> my_new_map_2;
+ * // calls my_new_map_2.insert() for each element
+ * in2.insert_into(my_new_map_2);
+ *
+ * // Or even:
+ * iserialstring in2alt(out2.str());
+ * vector<pair<int, string> > my_new_map_2alt;
+ * // cals my_new_map_2alt.push_back() for each element
+ * in2alt.push_back_into(my_new_map_2alt);
+ * \endcode
+ *
+ */
+
+class oserial {
+  public:
+    /// Flag parameters that may be used when constructing an
+    /// oserial object.
+    enum {
+        /// Use the verbose, typesafe representation for output.
+        typesafe,
+
+        /// Use a readable but non-typesafe output format.
+        readable,
+
+        /// Use a more compact, non-human-readable, typesafe representation for output.
+        binary,
+
+        /// Use a very compact, non-human-readable, typesafe representation for output.
+        compact,
+
+	nosignature = 0x10
+    };
+
+  protected:
+    status st;
+
+    int mode;
+    bool nosig;
+
+    virtual void put(int ch) = 0;
+    virtual void put(const char *ch, unsigned int len) = 0;
+
+    void put(const string& s) { put(s.data(), s.length()); }
+    void put(const char *ch) { put(ch, strlen(ch)); }
+
+    // Default freeze mechanism
+
+    template<typename T>
+    inline void freeze_as_string(const T& t) {
+        string s = to_string(t);
+
+        unsigned int len = s.length();
+        if (mode == readable && s.find_first_of(';') == string::npos)
+            len = 0;
+        write_type(typeid(t).name(), len);
+
+        put(s.data(), s.length());
+
+        if (mode == typesafe || mode == readable)
+            put(';');
+    }
+
+    template<typename T>
+    inline void default_freeze(const T& t) {
+        freeze_as_string(t);
+    }
+
+    template<typename T>
+    inline void write_compact_signed(T s) {
+        bool neg = false;
+        if (s < 0) {
+            s = -s - 1;
+            neg = true;
+        }
+        if (s <= 0x3F) {
+            put((neg ? 0x40 : 0x00) | s);
+            return;
+        }
+        put((neg ? 0xC0 : 0x80) | (s & 0x3F));
+        s >>= 6;
+        while (1) {
+            if (s <= 0x7F) {
+                put(s);
+                return;
+            }
+            put((s & 0x7F) | 0x80);
+            s >>= 7;
+        }
+    }
+
+    template<typename T>
+    inline void write_compact_unsigned(T s) {
+        write_compact_signed((long long)s);
+    }
+
+#ifndef DOXYGEN_SKIP
+
+#define NMSTL_DEFAULT_FREEZE_SCALAR(T, signed, bytes) \
+    inline void default_freeze(T s) { \
+        if (mode == typesafe || mode == readable) freeze_as_string(s); \
+        else if (mode == compact) write_compact_##signed(s); \
+        else { for (int i = (bytes-1) * 8; i >= 0; i -= 8) { put((s >> i) & 0xFF); } } \
+    }
+
+#define NMSTL_DEFAULT_FREEZE_AS_STRING(T) \
+    inline void default_freeze(T s) { freeze_as_string(s); }
+
+    NMSTL_DEFAULT_FREEZE_SCALAR(short, unsigned, 2);
+    NMSTL_DEFAULT_FREEZE_SCALAR(unsigned short, unsigned, 2);
+    NMSTL_DEFAULT_FREEZE_SCALAR(int, signed, 4);
+    NMSTL_DEFAULT_FREEZE_SCALAR(unsigned int, unsigned, 4);
+    NMSTL_DEFAULT_FREEZE_SCALAR(long, signed, 4);
+    NMSTL_DEFAULT_FREEZE_SCALAR(unsigned long, unsigned, 4);
+    NMSTL_DEFAULT_FREEZE_SCALAR(long long, signed, 8);
+    NMSTL_DEFAULT_FREEZE_SCALAR(unsigned long long, unsigned, 8);
+
+    inline void default_freeze(const bool& b) {
+        if (mode == typesafe || mode == readable) {
+            write_type(typeid(bool).name(), mode == readable ? 0 : 1);
+            put(b ? "1;" : "0;", 2);
+        } else {
+            put(b ? 1 : 0);
+        }
+    }
+
+#endif
+
+    template<class T>
+    inline void default_freeze(const ptr<T>& t) {
+        if (t) {
+            *this << true << t->get_typeid() << *t;
+        } else {
+            *this << false;
+        }
+    }
+
+    inline void default_freeze(const char *s) {
+        write_type(typeid(string).name(), strlen(s));
+        put(s, strlen(s));
+        if (mode == typesafe || mode == readable)
+            put(';');
+    }
+
+    inline void default_freeze(const string& s) {
+        unsigned int len = (mode == readable && s.find_first_of(';') == string::npos) ? 0 : s.length();
+
+        write_type(typeid(string).name(), len);
+
+        put(s.data(), s.length());
+        if (mode == typesafe || mode == readable)
+	    put(';');
+    }
+
+    inline void default_freeze(constbuf s) {
+        write_type(typeid(string).name(), s.length());
+        put(s.data(), s.length());
+        if (mode == typesafe || mode == readable)
+	    put(';');
+    }
+
+    template<typename T, typename U>
+    inline void default_freeze(const pair<T,U>& p) {
+        begin_container(p);
+        *this << p.first << p.second;
+        end_container(p);
+    }
+
+    template<typename Container>
+    inline void default_freeze_container(const Container& c) {
+        write_type(typeid(Container).name(), c.size());
+        if (mode == typesafe || mode == readable)
+	    put('{');
+
+        for (typename Container::const_iterator i = c.begin(); i != c.end(); ++i)
+            *this << *i;
+
+        if (mode == typesafe || mode == readable)
+            put('}');
+    }
+
+    template<typename T>
+    inline void default_freeze(const vector<T>& t) { default_freeze_container(t); }
+    template<typename T, typename U>
+    inline void default_freeze(const map<T,U>& t) { default_freeze_container(t); }
+    template<typename T>
+    inline void default_freeze(const set<T>& t) { default_freeze_container(t); }
+
+#ifndef DOXYGEN_SKIP
+    template<typename T>
+    friend inline void freeze(oserial& o, const T& t) {
+        o.default_freeze(t);
+    }
+#endif
+
+    // Always writes out len, even in non-typesafe mode.
+    void write_type(const char *type, unsigned int len);
+
+    void init();
+
+  public:
+    /// Constructor.
+    ///
+    /// @param mode the mode in which to serialize data (typesafe, binary, or compact)
+    oserial(int mode = typesafe) :
+        st(true),
+	mode(mode & ~nosignature),
+	nosig((mode & nosignature) != 0)
+    {
+    }
+
+    virtual ~oserial() {}
+
+    /// Returns a null value if an error has occured, or a non-null
+    /// value if serialization has succeeded.  Exists to facilitate
+    /// the "if (my_oserial) { ... }" metaphor to test whether
+    /// an error has occurred on my_oserial.
+    operator const void*() const {
+        return st;
+    }
+
+    /// Returns the mode being used to serialize data.
+    int get_mode() const {
+        return mode;
+    }
+
+    /// Returns an error description if some aspect of serialization
+    /// has failed.
+    status stat() const {
+        return st;
+    }
+
+    /// Indicates that an aspect of serialization has failed and sets
+    /// the error description.
+    void set_error(const string& s) {
+        if (st) {
+            INFO << "Serialization error: " << s;
+            st = s;
+        }
+    }
+
+    /// Serializes a set of objects in succession.
+    template<class InputIterator>
+    inline oserial& serialize(InputIterator begin, InputIterator end) {
+        while (begin != end)
+            freeze(*this, *begin++);
+        return *this;
+    }
+
+    /// The operator used to serialize objects.
+    template<class T>
+    inline oserial& operator << (const T& t) {
+        freeze(*this, t);
+        return *this;
+    }
+
+#ifndef DOXYGEN_SKIP
+    // Not really part of the public interface
+
+    template<typename T>
+    void begin_container(const T& t) {
+        if (mode == typesafe || mode == readable) {
+            write_type(typeid(t).name(), 0);
+            put('{');
+        }
+    }
+
+    template<typename T>
+    void end_container(const T&) {
+        if (mode == typesafe || mode == readable) {
+            put('}');
+        }
+    }
+#endif
+
+};
+
+class oserialstream : public oserial {
+    ostream& out;
+
+  private:
+    oserialstream(const oserial&);
+    oserialstream& operator = (const oserial&);
+  
+  public:
+    oserialstream(ostream& out, int mode = typesafe) : oserial(mode), out(out) {
+	init();
+    }
+	
+  protected:
+    virtual void put(int ch) {
+        out.put(ch);
+        if (!out) set_error("stream error");
+    }
+    virtual void put(const char *ch, unsigned int len) {
+        out.write(ch, len);
+        if (!out) set_error("stream error");
+    }
+};
+
+class oserialstring : public oserial {
+    string out;
+
+  private:
+    oserialstring(const oserialstring&);
+    oserialstring& operator = (const oserialstring&);
+  
+  public:
+    oserialstring(int mode = typesafe) : oserial(mode) {
+	init();
+    }
+	
+    string str() { return out; }
+
+  protected:
+    virtual void put(int ch) { out.push_back(ch); }
+    virtual void put(const char *ch, unsigned int len) { out.append(ch, ch + len); }
+};
+
+
+
+
+
+/**
+ *
+ * An iserial is analogous to an ObjectInputStream in Java.  To deserialize
+ * objects:
+ *
+ * <ol>
+ *   <li>Create an istream object.
+ *   <li>Create an iserial object pointing to that ostream.
+ *   <li>Read objects from the oserial object using the >> operator.
+ * </ol>
+ *
+ * Please refer to the oserial documentation for a more in-depth description
+ * and example.
+ *
+ */
+
+class iserial {
+  public:
+    enum {
+        typesafe,
+        readable,
+        binary,
+        compact,
+	automatic
+    };
+
+  protected:
+    iserial(const iserial&);
+    iserial& operator = (const iserial&);
+
+    status st;
+
+    int mode;
+    static const int eof = -1;
+
+    virtual int peek() = 0;
+    virtual int get() = 0;
+    virtual bool get(char *ch, unsigned int len) = 0;
+
+    // Default unfreeze mechanism
+
+    template<typename T>
+    inline void default_unfreeze(ptr<T>& t) {
+        bool exists;
+        *this >> exists;
+
+        DEBUG << "Reading " << (exists ? "non-null" : "null") << " ptr<" << typeid(T).name() << ">";
+
+        if (exists)
+            t.set(T::__nmstl_serialreg().create(*this));
+    }
+
+    template<typename T>
+    inline void default_unfreeze(T& t) {
+        unsigned int length;
+        if (!check_type(typeid(T).name(), length)) return;
+        t = read_scalar<T>(length);
+    }
+
+#ifndef DOXYGEN_SKIP
+
+#define NMSTL_DEFAULT_UNFREEZE_SCALAR(T, signed, bytes) \
+    inline void default_unfreeze(T& s) { \
+        if (mode == typesafe || mode == readable) default_unfreeze<T>(s); \
+        else if (mode == compact) read_compact_##signed(s); \
+        else { s = 0; for (int i = 0; i < bytes; ++i) { s <<= 8; int ss = get(); if (ss == eof) { set_error("Incomplete " #signed " " #T); return; } s += ss; } } \
+        DEBUG << "Read " #T " " << s; \
+    }
+
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(bool, signed, 1);
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(short, signed, 2);
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(unsigned short, unsigned, 2);
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(int, signed, 4);
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(unsigned int, unsigned, 4);
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(long, signed, 4);
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(unsigned long, unsigned, 4);
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(long long, signed, 8);
+    NMSTL_DEFAULT_UNFREEZE_SCALAR(unsigned long long, unsigned, 8);
+
+#endif
+
+    inline void default_unfreeze(string& s) {
+        unsigned int length;
+        if (!check_type(typeid(string).name(), length)) return;
+        s = read_string(length);
+        DEBUG << "Reading string \"" << to_escaped_string(s) << "\"";
+    }
+
+    void default_unfreeze(dynbuf& s);
+
+    template<typename T, typename U>
+    inline void default_unfreeze(pair<T,U>& p) {
+        unsigned int length;
+
+        DEBUG << "Reading pair<" << typeid(T).name() << "," << typeid(U).name() << ">";
+
+        if (mode == typesafe || mode == readable) {
+            if (!check_type(typeid(pair<const T, U>).name(), length))
+                return;
+            if (get() != '{') {
+                set_error("Failed to read brace starting pair");
+                return;
+            }
+        }
+
+        *this >> p.first >> p.second;
+
+        if (mode == typesafe || mode == readable) {
+            if (get() != '}')
+                set_error("Failed to read brace ending pair");
+        }
+    }
+
+    template<typename Container, typename Data>
+    inline void default_unfreeze_container(Container& c) {
+        c.clear();
+
+        DEBUG << "Reading " << typeid(Container).name();
+
+        unsigned int length;
+        if (!check_type(typeid(Container).name(), length)) return;
+
+        if ((mode == typesafe || mode == readable) && get() != '{') {
+            set_error("Failed to read brace starting container");
+            return;
+        }
+
+        Data item;
+        for (unsigned int i = 0; i < length; ++i) {
+            if (!(*this >> item)) break;
+            c.insert(c.end(), item);
+        }
+
+        if ((mode == typesafe || mode == readable) && get() != '}') {
+            set_error("Failed to read brace ending container");
+            return;
+        }
+
+    }
+
+    template<typename T>
+    inline void default_unfreeze(vector<T>& t) { default_unfreeze_container<vector<T>,T>(t); }
+    template<typename T, typename U>
+    inline void default_unfreeze(map<T,U>& t) { default_unfreeze_container< map<T,U>, pair<T,U> >(t); }
+    template<typename T>
+    inline void default_unfreeze(set<T>& t) { default_unfreeze_container<set<T>,T>(t); }
+
+    template<typename T>
+    inline void read_compact_signed(T& out) {
+        int ch = get();
+        if (ch == eof) {
+	    set_error("Incomplete compact integer");
+            return;
+	}
+
+        bool neg = ch & 0x40;
+        out = ch & 0x3F;
+        int shift = -1;
+
+        while (ch & 0x80) {
+            shift += 7;
+            ch = get();
+            if (ch == eof) {
+		set_error("Incomplete compact integer");
+                return;
+	    }
+            out += T(ch & 0x7F) << shift;
+        }
+
+        if (neg)
+            out = -out - 1;
+    }
+
+    template<typename T>
+    inline void read_compact_unsigned(T& out) {
+        long long o;
+        read_compact_signed(o);
+        out = o;
+    }
+
+    iserial& check_type(const char *type) {
+        unsigned int actual_length;
+        return check_type(type, actual_length);
+    }
+
+    iserial& check_type(const char *type, unsigned int& actual_length);
+
+    string read_string(unsigned int length);
+
+    template<class T>
+    T read_scalar(unsigned int length) {
+        string s = read_string(length);
+        if (*this) {
+            istringstream iss(s);
+            T val;
+            iss >> val;
+            return val;
+        }
+        return T();
+    }
+
+#ifndef DOXYGEN_SKIP
+    template<typename T>
+    friend inline void unfreeze(iserial& i, T& t) {
+        i.default_unfreeze(t);
+    }
+#endif
+
+public:
+    /// Constructor.
+    ///
+    /// Note that iserial automatically figures out the mode with
+    /// which the stream was serialized, so there is no need to
+    /// specify the mode (i.e., typesafe, binary, or compact).
+    iserial(int mode = automatic) : st(true), mode(mode)
+    {
+    }
+
+    virtual ~iserial() {}
+
+    void init();
+
+#ifndef DOXYGEN_SKIP
+    // Not really part of the public interface
+
+    template<typename T>
+    void begin_container() {
+        if (mode != typesafe && mode != readable) return;
+
+        if (!check_type(typeid(T).name())) return;
+        if (get() != '{') {
+            set_error("Expected left brace at beginning of container " +
+                      to_string(typeid(T).name()));
+        }
+    }
+
+    template<typename T>
+    void end_container() {
+        if (mode != typesafe && mode != readable) return;
+
+        if (get() != '}') {
+            set_error("Expected right brace at end of container " +
+                      to_string(typeid(T).name()));
+        }
+    }
+#endif
+
+    /// Returns a null value if an error has occured, or a non-null
+    /// value if deserialization has succeeded.  Exists to facilitate
+    /// the "if (my_iserial) { ... }" metaphor to test whether
+    /// an error has occurred on my_iserial.
+    operator const void*() const {
+        return st;
+    }
+
+    /// Returns an error description if some aspect of serialization
+    /// has failed.
+    status stat() { return st; }
+
+
+    /// Indicates that an aspect of serialization has failed and sets
+    /// the error description.
+    void set_error(const string& s) {
+        if (st) {
+            INFO << "Deserialization error: " << s;
+            st = s;
+        }
+    }
+
+    /// Deserializes a T.
+    template<class T>
+    inline iserial& operator >> (T& t) {
+        if (*this)
+            unfreeze(*this, t);
+        return *this;
+    }
+
+#if 0
+  //MR: does not compile in gcc 3.4.4
+    /// Deserializes all remaining elements in the stream, inserting
+    /// them into into t.  T must be a container type with a
+    /// single-argument insert defined (e.g., map) and T::value_type
+    /// must be defined (as in STL container types).
+    template<class T>
+    inline iserial& insert_into(T& t) {
+        typename T::value_type v;
+        while (*this && !eos()) {
+            unfreeze(*this, v);
+            t.insert(v);
+        }
+        return *this;
+    }
+
+    /// Deserializes all remaining elements in the stream, appending
+    /// them into into t.  T must be a container type with push_back
+    /// defined (e.g., vector) and T::value_type must be defined (as
+    /// in STL container types).
+    template<class T>
+    inline iserial& push_back_into(T& t) {
+        typename T::value_type v;
+        while (*this && !eos()) {
+            unfreeze(*this, v);
+            t.push_back(v);
+        }
+        return *this;
+    }
+#endif
+#ifndef DOXYGEN_SKIP
+  public:
+    template<class keytype, class Super>
+    class reg {
+        struct factory {
+            string name;
+            virtual Super *create(iserial& in) const = 0;
+            virtual ~factory() {}
+        };
+        template<class T>
+        struct factory1 : public factory {
+            Super *create(iserial& in) const {
+                T *p = new T;
+                in >> *p;
+                return p;
+            }
+        };
+
+        typedef map<keytype, ptr<factory> > fmap;
+        fmap factories;
+
+      public:
+        reg() {}
+
+        string typename_for_typeid(keytype k) {
+            typename fmap::const_iterator i = factories.find(k);
+            if (i == factories.end()) return string();
+            return i->second->name;
+        }
+
+        template<class T>
+        bool add(string name) {
+            factory *f = new factory1<T>;
+            f->name = name;
+            factories[T::__nmstl_serial_class_typeid] = ptr<factory>(f);
+            return true;
+        }
+
+        Super *create(iserial& in) const {
+            typename Super::typeid_type type;
+            if (in >> type) {
+                typename fmap::const_iterator i = factories.find(type);
+                if (i != factories.end())
+                    return i->second->create(in);
+
+                if (factories.empty())
+                    in.set_error(string("No factories registered for ") +
+                                 typeid(Super).name() +
+                                 " - tried to deserialize subclass with typeid " +
+                                 type);
+                else
+                    in.set_error(string("No factory registered for typeid ") +
+                                 type + " under " + typeid(Super).name());
+            }                                     
+
+            return 0;
+        }
+    };
+#endif
+};
+
+class iserialdata : public iserial {
+    const char *begin, *ptr, *end;
+
+  private:
+    iserialdata(const iserialdata&);
+    iserialdata& operator = (const iserialdata&);
+
+  public:
+    iserialdata(constbuf buf, int mode = automatic) :
+	iserial(mode),
+	begin(buf.data()), ptr(buf.data()), end(buf.data() + buf.length())
+    {
+	init();
+    }
+
+    int pos() {
+	return ptr - begin;
+    }
+
+    constbuf remainder() {
+	return constbuf(ptr, end - ptr);
+    }
+
+  protected:
+    virtual int peek() { return ptr < end ? (unsigned char)*ptr : eof; }
+    virtual int get() { return ptr < end ? (unsigned char)*ptr++ : eof; }
+    virtual bool get(char *ch, unsigned int len) {
+	if (end - ptr >= int(len)) {
+	    memcpy(ch, ptr, len);
+	    ptr += len;
+	    return true;
+	}
+	return false;
+    }
+};
+
+
+class iserialstring : public iserial {
+    string str;
+    string::const_iterator begin, ptr, end;
+
+  private:
+    iserialstring(const iserialstring&);
+    iserialstring& operator = (const iserialstring&);
+
+  public:
+    iserialstring(string str, int mode = automatic) :
+	iserial(mode),
+	str(str)
+    {
+	begin = ptr = this->str.begin();
+	end = this->str.end();
+
+	init();
+    }
+
+    int pos() {
+	return ptr - begin;
+    }
+
+    string remainder() {
+	return string(ptr, end);
+    }
+
+  protected:
+    virtual int peek() { return ptr != end ? (unsigned char)*ptr : eof; }
+    virtual int get() { return ptr != end ? (unsigned char)*ptr++ : eof; }
+    virtual bool get(char *ch, unsigned int len) {
+	if (end - ptr >= int(len)) {
+	    copy(ptr, ptr + len, ch);
+	    ptr += len;
+	    return true;
+	}
+	return false;
+    }
+};
+
+
+    
+
+
+
+/**
+ * Declares a class T as serializable.  Should be included inside
+ * T's class declaration (see the oserial documentation for usage).
+ */
+#define NMSTL_SERIALIZABLE(T) \
+friend inline void freeze(::nmstl::oserial &out, const T& m) { out.begin_container(m); m.freeze(out); out.end_container(m); } \
+friend inline void unfreeze(::nmstl::iserial &in, T& m) { in.begin_container<T>(); if (in) m.unfreeze(in); in.end_container<T>(); }
+
+
+
+#ifndef DOXYGEN_SKIP
+
+struct __iserial_adaptor {
+    iserial& in;
+
+    template <typename T>
+    __iserial_adaptor operator << (T& t) {
+        in >> t;
+        return *this;
+    }
+
+    __iserial_adaptor operator * () { return *this; }
+
+    __iserial_adaptor(iserial& in) : in(in) {}
+};
+
+#endif
+
+#define NMSTL_NO_FIELDS
+
+#define NMSTL_SIMPLE_SERIALIZATION(fields) \
+void freeze(::nmstl::oserial& out) const { if (out fields) ; } \
+void unfreeze(::nmstl::iserial& in) { (*::nmstl::__iserial_adaptor(in)) fields; }
+
+#define NMSTL_SIMPLE_VIRTUAL_SERIALIZATION(fields) \
+virtual void freeze(::nmstl::oserial& out) const { if (out fields) ; } \
+virtual void unfreeze(::nmstl::iserial& in) { (*::nmstl::__iserial_adaptor(in)) fields; }
+
+#define NMSTL_SIMPLE_VIRTUAL_SERIALIZATION_SUPER(Super, fields) \
+virtual void freeze(::nmstl::oserial& out) const { Super::freeze(out); if (out fields) ; } \
+virtual void unfreeze(::nmstl::iserial& in) { Super::unfreeze(in); (*::nmstl::__iserial_adaptor(in)) fields; }
+
+#define NMSTL_TYPEID(T, keytype) \
+typedef keytype typeid_type; \
+static const typeid_type __nmstl_serial_class_typeid; \
+virtual typeid_type get_typeid() const { return __nmstl_serial_class_typeid; } \
+virtual string get_typename() const { return #T; } \
+static typeid_type class_typeid() { return __nmstl_serial_class_typeid; } \
+static string class_typename() { return #T; } \
+static bool __nmstl_serial_register() { return __nmstl_serialreg().add<T>(#T); } \
+static const bool __nmstl_serial_registered;
+
+#define NMSTL_BASE_CLASS(T, keytype) \
+NMSTL_TYPEID(T, keytype) \
+static iserial::reg<keytype, T>& __nmstl_serialreg() { static iserial::reg<keytype, T> r; return r; } \
+static string typename_for_typeid(keytype id) { return __nmstl_serialreg().typename_for_typeid(id); }
+
+/**
+ * Declares a class as T as simply serializable, i.e., specifies that
+ * T can be read or written simply by reading or writing a set of
+ * instance variables.  Should be included inside a class declaration.
+ * The second argument should be the list of variables to be
+ * read/written, each prefixed with the << operator (see the oserial
+ * documentation for usage).
+ *
+ * For base classes, you should use NMSTL_SIMPLY_SERIALIZABLE_BASE_CLASS
+ * instead of this macro.  For subclasses, use NMSTL_SIMPLY_SERIALIZABLE_SUBCLASS
+ * instead.
+ */
+#define NMSTL_SERIAL(T, fields) \
+  public: NMSTL_SERIALIZABLE(T) NMSTL_SIMPLE_SERIALIZATION(fields)
+
+#define NMSTL_SIMPLY_SERIALIZABLE(T, fields) \
+  public: NMSTL_SERIALIZABLE(T) NMSTL_SIMPLE_SERIALIZATION(fields)
+
+#define NMSTL_SIMPLY_SERIALIZABLE_BASE_CLASS(T, fields) \
+  public: NMSTL_SERIALIZABLE(T) NMSTL_SIMPLE_VIRTUAL_SERIALIZATION(fields) \
+          NMSTL_BASE_CLASS(T, string, typeid(T).name())
+
+#define NMSTL_SIMPLY_SERIALIZABLE_SUBCLASS(T, Super, fields) \
+  public: NMSTL_SERIALIZABLE(T) NMSTL_SIMPLE_VIRTUAL_SERIALIZATION_SUPER(Super, fields) \
+          NMSTL_TYPEID(T, string, typeid(T).name())
+
+#define NMSTL_SIMPLY_SERIALIZABLE_BASE_CLASS_WITH_ID(T, keytype, fields) \
+  public: NMSTL_SERIALIZABLE(T) NMSTL_SIMPLE_VIRTUAL_SERIALIZATION(fields) \
+          NMSTL_BASE_CLASS(T, keytype)
+
+#define NMSTL_SIMPLY_SERIALIZABLE_SUBCLASS_WITH_ID(T, Super, fields) \
+  public: NMSTL_SERIALIZABLE(T) NMSTL_SIMPLE_VIRTUAL_SERIALIZATION_SUPER(Super, fields) \
+          NMSTL_TYPEID(T, Super::typeid_type)
+
+#define NMSTL_SERIAL_BASE(T, keytype, fields) NMSTL_SIMPLY_SERIALIZABLE_BASE_CLASS_WITH_ID(T, keytype, fields)
+#define NMSTL_SERIAL_SUBCLASS(T, Super, fields) NMSTL_SIMPLY_SERIALIZABLE_SUBCLASS_WITH_ID(T, Super, fields)
+
+#define NMSTL_SERIAL_DEFINE(T, key) \
+const bool T::__nmstl_serial_registered = T::__nmstl_serial_register(); \
+const T::typeid_type T::__nmstl_serial_class_typeid = key;
+
+// N.B.: "if (out fields) ;" above could simply be "out fields;"
+// except that GCC complains about statement w/o effect
+
+
+#include <nmstl/ntime>
+
+inline void freeze(oserial &out, const ntime& m) {
+    out.begin_container(m);
+    out << m.to_usecs();
+    out.end_container(m);
+}
+inline void unfreeze(iserial &in, ntime &m) {
+    in.begin_container<ntime>();
+    if (in) {
+        long long val;
+        in >> val;
+        m = ntime::usecs(val);
+    }
+    in.end_container<ntime>();
+}
+
+
+
+NMSTL_NAMESPACE_END;
+
+#endif

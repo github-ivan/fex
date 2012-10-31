@@ -1,0 +1,504 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_TERMINAL
+#define NMSTL_H_TERMINAL
+
+/** \file
+ * Terminal handling for asynchronous I/O.
+ */
+
+#include <nmstl/ioevent>
+#include <nmstl/callback>
+
+#include <unistd.h>
+#include <fcntl.h>
+
+// Braindead readline.h
+#define USE_VARARGS
+#define PREFER_STDARG
+#include <readline/readline.h>
+#include <readline/history.h>
+
+NMSTL_NAMESPACE_BEGIN;
+
+#ifndef DOXYGEN_SKIP
+
+// A command available to the term_handler.  This should really be
+// an inner class of term_handler, but term_handler_command1 needs
+// to be outside because we use tempa
+struct term_handler_command {
+    string name;
+    string usage;
+    unsigned int min_args;
+    unsigned int max_args;
+    bool is_text;
+    virtual status invoke(const vector<string>&) = 0;
+    virtual ~term_handler_command() {}
+};
+
+// Implementations of term_handler_command for various supported
+// callback types.
+template<class R = void, class T1 = void, class T2 = void, class T3 = void>
+struct term_handler_command1;
+
+#define ELT(i) v.size() > i ? v[i] : string()
+
+template<> struct term_handler_command1< status > : public term_handler_command {
+    callback<status> cb;
+    virtual status invoke(const vector<string>&) { return cb(); }
+};
+template<> struct term_handler_command1< status, string > : public term_handler_command {
+    callback<status, string> cb;
+    virtual status invoke(const vector<string>& v) { return cb(ELT(0)); }
+};
+template<> struct term_handler_command1< status, string, string > : public term_handler_command {
+    callback<status, string, string> cb;
+    virtual status invoke(const vector<string>& v) { return cb(ELT(0), ELT(1)); }
+};
+template<> struct term_handler_command1< status, string, string, string > : public term_handler_command {
+    callback<status, string, string, string> cb;
+    virtual status invoke(const vector<string>& v) { return cb(ELT(0), ELT(1), ELT(2)); }
+};
+template<> struct term_handler_command1< status, vector<string> > : public term_handler_command {
+    callback<status, vector<string> > cb;
+    virtual status invoke(const vector<string>& v) { return cb(v); }
+};
+
+template<> struct term_handler_command1< void > : public term_handler_command {
+    callback<void> cb;
+    virtual status invoke(const vector<string>&) { cb(); return true; }
+};
+template<> struct term_handler_command1< void, string > : public term_handler_command {
+    callback<void, string> cb;
+    virtual status invoke(const vector<string>& v) { cb(ELT(0)); return true; }
+};
+template<> struct term_handler_command1< void, string, string > : public term_handler_command {
+    callback<void, string, string> cb;
+    virtual status invoke(const vector<string>& v) { cb(ELT(0), ELT(1)); return true; }
+};
+template<> struct term_handler_command1< void, string, string, string > : public term_handler_command {
+    callback<void, string, string, string> cb;
+    virtual status invoke(const vector<string>& v) { cb(ELT(0), ELT(1), ELT(2)); return true; }
+};
+template<> struct term_handler_command1< void, vector<string> > : public term_handler_command {
+    callback<status, vector<string> > cb;
+    virtual status invoke(const vector<string>& v) { cb(v); return true; }
+};
+#undef ELT
+
+#endif // DOXYGEN_SKIP
+
+/// GNU Readline-based terminal input/output handler, providing
+/// command completion and history.  When using term_handler, you must
+/// link against <code>libreadline.so</code> and
+/// <code>libncurses.so</code>, i.e., add <code>-lreadline -lncurses</code>
+/// to your linker command line.
+///
+/// To use a term_handler, you will typically
+///
+/// <ul>
+///
+/// <li>Create a global <code>term_handler</code> object, writing to
+/// it instead of to <code>cout</code>.
+///
+/// <li>Use <code>on_eof</code> to register a handler to be invoked
+/// when the input stream ends or the user types the built-in
+/// <code>quit</code> or <code>exit</code> commands.  (The default
+/// action is to terminate the event loop.)
+///
+/// <li>Use <code>add_command</code> to register handlers for
+/// commands that you wish to accept.
+///
+/// </ul>
+///
+/// Only one term_handler can be instantiated at a time, due to
+/// limitations in Readline.
+
+class term_handler : private io_handler, public ostream {
+    string prompt;
+
+    typedef term_handler_command command;
+
+    typedef map<string, ptr<command> > command_map;
+    command_map cmds;
+    command_map min_cmds;
+
+    callback<void> quit_cb;
+
+  public:
+    /// Constructor.
+    ///
+    /// @param loop the event loop to bind to.
+    /// @param prompt the string to be displayed when prompting for input.
+    term_handler(io_event_loop& loop, string prompt = "> ") :
+	io_handler(loop, iohandle(0 /* stdin */)),
+	ostream(0),
+	prompt(prompt),
+        quit_cb(wrap(loop, &io_event_loop::terminate)),
+	buf(*this)
+    {
+	ostream::init(&buf);
+
+	if (the_term_handler() != 0) {
+	    COREDUMP << "Only one term handler at a time allowed!";
+	}
+	the_term_handler() = this;
+	rl_callback_handler_install(prompt.c_str(), &term_handler::do_handle_line);
+
+	want_read(true);
+
+	add_command("help", 0, 0, wrap(this, &term_handler::help));
+	add_command("quit", 0, 0, wrap(this, &term_handler::do_eof));
+	add_command("exit", 0, 0, wrap(this, &term_handler::do_eof));
+
+	rl_attempted_completion_function = &term_handler::completion;
+
+        debug::get().set_debug_stream(*this);
+    }
+
+    /// Destructor.
+    ~term_handler() {
+	rl_callback_handler_remove();
+	the_term_handler() = 0;
+
+        if (&(debug::get().get_debug_stream()) == this)
+            debug::get().set_debug_stream(cout);
+    }
+
+    /// Registers a callback to be invoked when the input stream
+    /// ends (e.g., the user types Control-D).
+    void on_eof(callback<void> quit_cb) {
+	this->quit_cb = quit_cb;
+    }
+
+    static const unsigned int text_arg = 0x10000;
+
+    /// A flag which may be passed to add_command (as the
+    /// max_args argument) specifying that <i>any</i> number
+    /// of arguments greater than or equal to min_args is
+    /// valid.
+    static const unsigned int var_args = UINT_MAX;
+
+#ifdef DOXYGEN_SKIP
+    /// Adds a binding for a command.
+    ///
+    /// @param name the name of the command (usually an all-lowercase string),
+    ///    optionally followed by a space and a human-readable description
+    ///    of the arguments.
+    /// @param min_args the minimum acceptable number of arguments to the command
+    ///    (not including the command name)
+    /// @param max_args the maximum acceptable number of arguments to the command.
+    ///    Use <code>var_args</code> if any number of arguments is acceptable, or
+    ///    <code><i>num</i> | text_arg</code> if any more than <i>num</i>
+    ///    arguments should be concatenated and added to the previous argument
+    ///    (e.g., for a command like <code>echo</code>).
+    /// @param cb the callback to be invoked when the command is run.  The
+    ///    callback should have one of the following signatures:
+    ///
+    ///    <code>
+    ///    void handler(void);<br>
+    ///    void handler(string arg1);<br>
+    ///    void handler(string arg1, string arg2);<br>
+    ///    void handler(string arg1, string arg2, string arg3);<br>
+    ///    void handler(vector<string> args);<br>
+    ///    status handler(void);<br>
+    ///    status handler(string arg1);<br>
+    ///    status handler(string arg1, string arg2);<br>
+    ///    status handler(string arg1, string arg2, string arg3);<br>
+    ///    status handler(vector<string> args);<br>
+    ///    </code>
+    ///
+    ///    The first three arguments are passed as arg1, arg2, and arg3;
+    ///    or all arguments are passed as args[0].
+    ///
+    ///    If the callback returns a "bad" status, it is displayed as an
+    ///    error message on the terminal.
+
+    template<class CallbackType>
+    void add_command(string name, unsigned int min_args, unsigned int max_args,
+                     CallbackType cb);
+#else
+
+    template<typename R, typename T1, typename T2, typename T3>
+    void add_command(string name, unsigned int min_args, unsigned int max_args,
+                     const callback<R, T1, T2, T3>& cb)
+    {
+        term_handler_command1<R, T1, T2, T3> *cmd1 = new term_handler_command1<R, T1, T2, T3>;
+
+        unsigned int i = name.find_first_of(' ');
+        cmd1->name = name.substr(0, i);
+        if (i != string::npos) cmd1->usage = name.substr(i + 1);
+
+        cmd1->min_args = min_args;
+        cmd1->max_args = max_args & ~text_arg;
+        cmd1->is_text = (max_args & ~text_arg) != 0;
+        cmd1->cb = cb;
+
+        cmds[cmd1->name] = ptr<command>(cmd1);
+
+        min_cmds.clear();
+    }
+#endif
+
+  private:
+    static term_handler*& the_term_handler() {
+	static term_handler *t = 0;
+	return t;
+    }
+
+    void help() {
+	*this << "Available commands:" << endl << endl;
+	for (command_map::const_iterator i = cmds.begin(); i != cmds.end(); ++i)
+	    *this << "  " << i->first << " " << i->second->usage << endl;
+	*this << endl;
+    }	
+
+    class my_stringbuf : public stringbuf {
+	term_handler &handler;
+	bool syncing;
+
+      public:
+	my_stringbuf(term_handler &handler) : handler(handler), syncing(false) {}
+
+	streamsize xsputn(const char_type* s, streamsize n) {
+	    streamsize ret = stringbuf::xsputn(s, n);
+	    sync();
+	    return ret;
+	}
+
+	int sync() {
+	    if (syncing) return stringbuf::sync();
+
+	    syncing = true;
+	    // Prevent infinite recursion in str(), which may call sync()
+	    if (str().find_first_of('\n') != string::npos) {
+		handler.want_write(true);
+	    }
+	    syncing = false;
+	    return stringbuf::sync();
+	}
+    };
+    my_stringbuf buf;
+
+    void do_eof() {
+        rl_set_prompt("");
+        if (quit_cb)
+            quit_cb();
+    }
+
+    static char **completion(const char *text, int start, int end) {
+	if (start == 0)
+	    return rl_completion_matches(text, command_generator);
+
+	rl_attempted_completion_over = 1;
+	return 0;
+    }
+
+    static char *command_generator(const char *text, int state)
+    {
+	static command_map::const_iterator i;
+	term_handler *term = the_term_handler();
+
+	if (!state)
+	    i = term->cmds.begin();
+
+	while (i != term->cmds.end()) {
+	    if (i->first.substr(0, strlen(text)) == text) {
+		return strdup(i++->first.c_str());
+	    }
+
+	    ++i;
+	}
+
+	return 0;
+    }
+
+    void calc_min_cmds() {
+        if (!min_cmds.empty()) return;
+
+        const string* last = 0;
+        command_map::const_iterator next;
+
+        min_cmds = cmds;
+
+        for (command_map::const_iterator i = cmds.begin(); i != cmds.end(); i = next) {
+            const string& s = i->first;
+
+            next = i;
+            ++next;
+
+// Workaround for G++ <= 2.96
+#if defined(__STL_CONFIG_H)
+#  define COMPARE(a, as, ap, b, bs, bp) string(a, as, ap).compare(string(b, bs, bp))
+#else
+#  define COMPARE(a, as, ap, b, bs, bp) (a).compare(0, j, s, 0, j)
+#endif
+
+            for (unsigned int j = 1; j < s.length(); ++j) {
+                if (last && COMPARE(*last, 0, j, s, 0, j) == 0)
+                    continue;
+                if (next != cmds.end() && COMPARE(next->first, 0, j, s, 0, j) == 0)
+                    continue;
+
+                min_cmds[s.substr(0, j)] = i->second;
+            }
+
+            last = &s;
+        }
+    }
+
+    void handle_line(string l) {
+        calc_min_cmds();
+
+	vector<string> args = tokenize(l);
+	if (args.size() == 0)
+	    return;
+
+	add_history(l.c_str());
+
+	string name = args[0];
+	command_map::const_iterator i = min_cmds.find(name);
+	if (i == min_cmds.end()) {
+	    *this << "Unknown command \"" << name << "\" - type \"help\" for valid commands." << endl;
+	    return;
+	}
+
+	const ptr<command>& cmd = i->second;
+
+	args.erase(args.begin());
+
+	if (cmd->is_text && args.size() > cmd->max_args) {
+	    for (unsigned int i = cmd->max_args; i < args.size(); ++i)
+		args[cmd->max_args - 1] += " " + args[i];
+	    args.resize(cmd->max_args);
+	}
+
+	if (args.size() < cmd->min_args || args.size() > cmd->max_args) {
+	    *this << "usage: " << cmd->name << " " << cmd->usage << endl;
+	    return;
+	}
+
+	status stat = cmd->invoke(args);
+	if (!stat)
+	    *this << stat << endl;
+    }
+
+    void ravail() {
+	rl_callback_read_char();
+	cout.flush();
+    }
+
+    void wavail() {
+	string bstr = buf.str();
+	unsigned int last = bstr.find_last_of('\n');
+	if (last != string::npos) {
+	    char *cpy = 0;
+	    int point;
+
+	    if (*rl_line_buffer) {
+		point = rl_point;
+	        cpy = strdup(rl_line_buffer);
+		rl_beg_of_line(0,0);
+		rl_delete_text(0, strlen(rl_line_buffer));
+		rl_redisplay();
+	    }
+
+	    // Go back to beginning of line, erasing prompt
+	    cout << string(prompt.length(), '\b');
+
+	    cout << bstr.substr(0, last + 1);
+	    cout.flush();
+
+	    if (cpy) {
+		rl_do_undo();
+		rl_point = point;
+		rl_forced_update_display();
+	    } else {
+		rl_forced_update_display();
+	    }
+
+	    buf.str(bstr.substr(last + 1));
+	}
+	want_write(false);
+    }
+
+    vector<string> tokenize(string line) {
+	vector<string> args;
+
+	string::const_iterator i = line.begin();
+	string::const_iterator end = line.end();
+
+	while (1) {
+	    while (i != end && isspace(*i)) ++i;
+	    if (i == end) break;
+
+	    char term = 0;
+
+	    string arg;
+
+	    while (i != end) {
+		if (term == 0 && isspace(*i)) break;
+		if (term == 0 && (*i == '\"' || *i == '\'')) {
+		    term = *i++;
+		    continue;
+		}
+		if (*i == '\\' && (i+1 != end)) {
+		    ++i;
+		    arg.push_back(*i++);
+		    continue;
+		}
+		if (term == *i) {
+		    term = 0;
+		    ++i;
+		    continue;
+		}
+		arg.push_back(*i++);
+	    }
+
+	    args.push_back(arg);
+	}
+
+	return args;
+    }
+
+    static void do_handle_line(char *line) {
+	term_handler *pthis = the_term_handler();
+
+	if (line == 0) {
+	    // EOF
+            pthis->buf.sputc('\n');
+	    pthis->want_read(false);
+	    pthis->do_eof();
+	} else {
+	    pthis->handle_line(line);
+	}
+
+	cout << pthis->buf.str();
+	pthis->buf.str(string());
+    }
+};
+
+
+NMSTL_NAMESPACE_END;
+
+#endif

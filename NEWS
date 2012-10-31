@@ -1,0 +1,45 @@
+Changes 0.8.18
+
+ * fex now compiles under gcc 3.4.4
+
+Changes 0.8.17
+
+ * added readonly option (for one way synchronization) to configuration.
+
+Changes 0.8.16
+
+ * bugfix backup mechanism: Directories may now cpntain also a period.
+ * bugfix renaming directorys with inotify or dnotify works now corectly
+ * inotify: added support for inotify interface after version 0.20
+ 
+
+Changes 0.8.15
+
+ * bugfix for backup mechanism: When a connection was aborted
+ * during reintegration, a conflicting file was backuped 
+ * multiple times.
+
+
+Changes 0.8.14
+ 
+ * create watchpoint directories if they don't exist
+ * new command line options -no-inotify, -no-dnotify
+ * more debug messages
+
+Changes 0.8.13
+ 
+ * improved net failure robustness 
+
+Changes 0.8.12
+
+ * improved file lock detection
+ * insert help message
+
+Changes 0.8.11
+
+ * some bugfixes in the file lock mechanism
+ * removed file copy operations
+
+Changes 0.7.9
+
+ * First public release.

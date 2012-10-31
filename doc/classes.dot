@@ -1,0 +1,111 @@
+
+graph Classes {
+	overlap=false
+	fontsize=14
+	fontname="Helvetica-Bold"
+	splines=true
+	//voro_margin=0.1
+	//Epsilon=0.000001
+	start=47
+
+	node [shape=box,fontname="Helvetica-Bold"];
+	edge [fontname="Helvetica-Bold"]
+
+	Configuration [ label="<<singleton>>\nConfiguration" ];
+	ConnectionPool [ label="<<singleton>>\nConnectionPool" ];
+	ConnectedWatchPoint_Dialog [ label="ConnectedWatchPoint::Dialog" ];
+	
+	FileListener [ label="<<singleton>>\nFileListener" ];
+
+	SendLogDialog;
+	StackedDialog;
+	RsyncReceiveDialog;
+	Client_FullSyncDialog [ label="Client::FullSyncDialog" ];
+	LinkDialog;
+	SyncSendDialog;
+	SyncReceiveDialog;
+	RsyncSendDialog;
+	Server_FullSyncDialog [ label="Server::FullSyncDialog" ];
+	
+
+	ConnectedWatchPoint;
+	ClientWatchPoint;
+	WatchPoint;
+	IDTranslator;
+
+	ClientConnection;
+	Connection;
+
+	//class State;
+	//class Path;
+	//class Serializer;
+
+	
+	FileEvent;
+	LockPoll;
+
+	ModLog;
+	StateLog;
+
+
+	MonitorInterface;
+	INotifyMonitor;
+	DNotifyMonitor;
+	PollingMonitor;
+
+
+	//aggregation
+	//-------------------------------------
+
+	edge [arrowtail=odiamond,arrowsize=1,len=1.0,
+	      labelfontsize=14,labelfontname="Helvetica-Bold",
+	      labeldistance=1.5,labelfloat=false];
+	
+	Configuration -- WatchPoint [taillabel="*",];
+	WatchPoint -- IDTranslator [taillabel="*"];
+	Connection -- ConnectedWatchPoint [taillabel="*"];
+	ConnectedWatchPoint -- ConnectedWatchPoint_Dialog [taillabel="*"];
+	ConnectionPool -- Connection [taillabel=" *"];
+	FileListener -- { FileEvent  LockPoll } [taillabel="1"];
+	FileEvent -- MonitorInterface [taillabel="1"];
+
+
+	//references
+	//-----------------------------------
+	edge [arrowtail=none,len=1.5]
+
+	WatchPoint -- ConnectedWatchPoint
+	FileEvent -- WatchPoint
+
+	Client_FullSyncDialog -- Server_FullSyncDialog 
+	[label="Counterpart",weight=3.0]
+	SyncSendDialog -- SyncReceiveDialog [label="Counterpart"]
+	RsyncSendDialog -- RsyncReceiveDialog [label="Counterpart"]
+
+
+	//inheritance
+	//-----------------------------------
+
+	edge [arrowtail=empty,arrowsize=1.4,len=1.0]
+
+	ConnectedWatchPoint_Dialog --
+	{ LinkDialog
+	  SendLogDialog
+	  StackedDialog
+   	  Client_FullSyncDialog 
+	  Server_FullSyncDialog
+	  SyncSendDialog
+	  SyncReceiveDialog
+	  RsyncSendDialog
+	  RsyncReceiveDialog };
+	
+
+	MonitorInterface --
+	{ INotifyMonitor
+	  DNotifyMonitor
+	  PollingMonitor };
+
+	Connection -- ClientConnection ;
+	ModLog -- StateLog -- WatchPoint;
+	ConnectedWatchPoint -- ClientWatchPoint [len=1.0,weight=10.0];
+}

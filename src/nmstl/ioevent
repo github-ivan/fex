@@ -1,0 +1,667 @@
+// -*- mode: C++; -*-
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+/*
+  Michael Reithinger (2004):
+
+   This file was modified for better support of fex:
+   - Threading support was removed
+   - The poll-function (instead of select) was added.
+   - the loop destroy non-owned handles in its destructor
+   - event_loop_id from (unsigned int) to (unsigned long)
+*/ 
+
+
+#ifndef NMSTL_H_IOEVENT
+#define NMSTL_H_IOEVENT
+
+/** \file
+ * I/O handlers and event loops.
+ */
+
+#include <nmstl/internal.h>
+#include <nmstl/ntime>
+#include <nmstl/thread>
+#include <nmstl/io>
+
+#include <sys/time.h>
+#include <unistd.h>
+
+#include <cassert>
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
+
+#include <vector>
+#include <set>
+
+#ifdef USE_POLL
+#include <map>
+#include <algorithm>
+#include <sys/poll.h>
+#endif
+
+NMSTL_NAMESPACE_BEGIN;
+
+class io_event_loop;
+
+/**
+ * A handler that receives notifications on events on a file descriptor.
+ *
+ * The subclass may call want_read(bool) to enable/disable read events,
+ * and want_write(bool) to enable/disable write events.
+ *
+ * Handlers are only active when attached to both an event loop (via
+ * the constructor or set_loop) and a file descriptor (via the
+ * constructor or set_ioh()).
+ *
+ */
+class io_handler {
+    io_event_loop* loop;
+    iohandle ioh;
+    bool cur_want_read;
+    bool cur_want_write;
+    bool owned;
+
+    void attach();
+    void detach();
+
+protected:
+    /// Constructor.
+    io_handler(iohandle ioh = iohandle()) :
+        loop(0), ioh(ioh), cur_want_read(false), cur_want_write(false), owned(true) {}
+
+    /// Constructor.
+    io_handler(io_event_loop& loop, iohandle ioh = iohandle(), bool a_owned = false) :
+        loop(&loop), ioh(ioh), cur_want_read(false), cur_want_write(false), owned(a_owned)
+    {
+        attach();
+    }
+
+    /// Destructor
+    virtual ~io_handler() {
+        detach();
+    }
+
+    /// Attaches the handler to a file descriptor.
+    void set_ioh(iohandle ioh) {
+        detach();
+        this->ioh = ioh;
+        attach();
+    }
+
+    /// Called by the event loop when bytes are available on the file
+    /// descriptor (if want_read(true) has been called).
+    virtual void ravail() {}
+
+    /// Called by the event loop when bytes may be written on the file
+    /// descriptor (if want_write(true) has been called).
+    virtual void wavail() {}
+
+    /// Invoked by the subclass to signal interest in read
+    /// availability.
+    void want_read(bool);
+
+    /// Invoked by the subclass to signal interest in write
+    /// availability.
+    void want_write(bool);
+
+public:
+    /// Attaches the handler to an event loop.
+    void set_loop(io_event_loop& _loop) {
+        detach();
+        loop = &_loop;
+        attach();
+    }
+
+    /// Returns the event loop to which the handler is attached.
+    io_event_loop* get_loop() { return loop; }
+
+    /// Should this handler refrain from deleting itself on connection close?
+    bool is_owned() { return owned; }
+
+    /// Should this handler refrain from deleting itself on connection close?
+    void set_owned(bool o) { owned = o; }
+
+    /// Returns the file descriptor to which the handler is attached.
+    iohandle get_ioh() { return ioh; }
+
+    friend class io_event_loop;
+};
+
+class timer;
+
+
+/**
+ *
+ * An event loop that multiplexes a set of handlers.  May be used as a
+ * thread (with start()) or in the current thread (with run()).
+ *
+ */
+class io_event_loop {
+    io_event_loop(const io_event_loop &);
+    io_event_loop& operator = (const io_event_loop &);
+
+  //    mutex m;
+
+    /*
+     * A class used internally by io_event_loop so that other threads can "wake up"
+     * the event loop thread by sending it a byte.
+     */
+    class wake_handler : public io_handler {
+        iohandle wioh;
+    
+    public:
+        wake_handler(io_event_loop& loop) : io_handler(loop) {
+            pair<iohandle,iohandle> ios = iohandle::pipe();
+
+	    set_owned(true);
+            set_ioh(ios.first);
+            wioh = ios.second;
+
+            ios.first.set_blocking(false);
+            ios.second.set_blocking(false);
+
+            want_read(true);
+        }
+
+        ~wake_handler() {
+        }
+
+        void wake() {
+            // Signal a wake by writing to iohs[1], which will
+            // generate a read event, waking up the event loop.  It's
+            // OK if we do this in more than one thread
+            ASSERT(wioh);
+            wioh.write("A", 1);
+        }
+
+        void drain() {
+            static char garbage[128];
+            while (get_ioh().read(garbage, sizeof garbage) == sizeof garbage) ;
+        }
+
+        void ravail() {
+            drain();
+        }
+    };
+
+    struct lttimerref {
+        bool operator()(timer *a, timer *b) const;
+    };
+
+#ifdef USE_POLL
+    typedef map<int, io_handler*> hvec;
+#else
+    typedef vector<io_handler*> hvec;
+#endif
+    hvec handlers;
+
+
+    typedef set<timer*, lttimerref> timerset;
+    timerset timers;
+
+    // used only by fire_timers (to avoid reallocation each event loop)
+    vector<timer*> to_fire;
+
+#ifdef USE_POLL
+  struct ltpollfd {
+    bool operator()(const pollfd &a, const pollfd &b) const;
+  };
+
+  typedef vector<pollfd> fdvec;
+  fdvec pollfds;
+#else
+    fd_set readfds;
+    fd_set writefds;
+    int maxfd;
+#endif
+
+    bool quit_flag;
+    wake_handler *waker;
+
+    unsigned long event_loop_id;
+
+public:
+    /// Constructor.
+    io_event_loop() : quit_flag(false), event_loop_id(0) {
+#ifndef USE_POLL
+        FD_ZERO(&readfds);
+        FD_ZERO(&writefds);
+        maxfd = -1;
+#endif
+        waker = new wake_handler(*this);
+    }
+
+    /// Destructor.
+    ~io_event_loop() {
+        // Set waker = 0; otherwise, when any remaining handlers
+        // detach, they'll invoke the waker
+        wake_handler *w = waker;
+        waker = 0;
+        delete w;
+	tidy_handlers();
+    }
+    
+    /**
+     * Invokes the event loop.  Returns only when an event handler (or
+     * other thread) signals the event loop to terminate via the
+     * terminate method.
+     */
+    void run() {
+        while (!quit_flag) run_once();
+    }
+
+    void tidy_handlers() {
+	hvec::iterator i = handlers.begin();
+	for(; i != handlers.end(); i++) {
+#ifdef USE_POLL
+	  if (! i->second->is_owned())
+	    delete i->second;
+#else
+	  if (! (*i)->is_owned())
+	    delete (*i);
+#endif
+	}
+    }
+
+
+    /**
+     * Invokes the event loop once through.
+     */
+    void run_once();
+
+    /**
+     * Signals that the event loop should terminate.  May be invoked
+     * either by event handlers or by another thread.
+     */
+    void terminate() {
+        quit_flag = true;
+        wake();
+    }
+
+    /**
+     * Wakes the event loop up immediately.  May be invoked
+     * either by event handlers or by another thread.
+     */
+    void wake() {
+         if (waker && event_loop_id) // && event_loop_id != thread::self_id())
+	    waker->wake();
+    }
+
+private:
+    void want_read(int fd, bool act) {
+#ifdef USE_POLL
+        INFO << (act ? "Enabling" : "Disabling") << " reads on FD " << fd;
+
+	//        locking (m) {
+	  pollfd pf;
+
+	  pf.fd = fd;
+	  fdvec::iterator iter = lower_bound(pollfds.begin(), 
+					     pollfds.end(),
+					     pf,
+					     ltpollfd());
+
+	  assert(iter != pollfds.end());
+	  
+	  if (act)
+	    iter->events |= POLLIN;
+	  else
+	    iter->events &= ~POLLIN;
+	  //        }
+#else
+        assert(fd >= 0 && fd < FD_SETSIZE);
+
+        INFO << (act ? "Enabling" : "Disabling") << " reads on FD " << fd;
+
+        //locking (m) {
+            if (act)
+                FD_SET(fd, &readfds);
+            else
+                FD_CLR(fd, &readfds);
+	    //}
+#endif
+        wake();
+    }
+    void want_write(int fd, bool act) {
+#ifdef USE_POLL
+        INFO << (act ? "Enabling" : "Disabling") << " reads on FD " << fd;
+
+        //locking (m) {
+	  pollfd pf;
+
+	  pf.fd = fd;
+	  fdvec::iterator iter = lower_bound(pollfds.begin(), 
+					     pollfds.end(),
+					     pf,
+					     ltpollfd());
+
+	  assert(iter != pollfds.end());
+	  
+	  if (act)
+	    iter->events |= POLLOUT;
+	  else
+	    iter->events &= ~POLLOUT;
+	  //}
+#else
+        assert(fd >= 0 && fd < FD_SETSIZE);
+
+        INFO << (act ? "Enabling" : "Disabling") << " writes on FD " << fd;
+
+        //locking (m) {
+            if (act)
+                FD_SET(fd, &writefds);
+            else
+                FD_CLR(fd, &writefds);
+	    //}
+#endif
+        wake();
+    }
+
+    void set_handler(int fd, io_handler *p) {
+#ifdef USE_POLL
+      //locking (m) {
+	pollfd pf;
+	pf.fd = fd;
+	fdvec::iterator iter = lower_bound(pollfds.begin(), 
+					   pollfds.end(),
+					   pf,
+					   ltpollfd());
+
+	if (p == NULL) {
+	  // detach
+	  assert(iter != pollfds.end() && iter->fd == fd);
+	  handlers.erase(fd);
+	  pollfds.erase(iter);
+	}
+	else {
+	  assert(iter == pollfds.end() || iter->fd != fd);
+	  handlers.insert(hvec::value_type(fd, p));
+	  pf.events = 0;
+	  if (p->cur_want_read)  pf.events |= POLLIN;
+	  if (p->cur_want_write) pf.events |= POLLOUT;
+	  pollfds.insert(iter, pf);
+	}
+	//}
+#else
+
+        assert(fd >= 0 && fd < FD_SETSIZE);
+
+        //locking (m) {
+            if (handlers.size() <= unsigned(fd))
+                handlers.resize(fd + 1);
+            handlers[fd] = p;
+            if (fd > maxfd)
+                maxfd = fd;
+
+            bool r = p && p->cur_want_read;
+            bool w = p && p->cur_want_write;
+
+            if (p) {
+                INFO << "Setting handler for " << fd << " to " << to_string(typeid(*p)) << "; " <<
+                    "want_read=" << r << "; want_write=" << w;
+            } else {
+                INFO << "Disabling handler for " << fd;
+            }
+
+            if (r) FD_SET(fd, &readfds); else FD_CLR(fd, &readfds);
+            if (w) FD_SET(fd, &writefds); else FD_CLR(fd, &writefds);
+	    //}
+#endif
+        wake();
+
+    }
+
+    /// Returns time until next timer would fire (or CLEAR if none)
+    ntime fire_timers();
+
+    friend class io_handler;
+    friend class timer;
+};
+
+/**
+ * An object that may be attached to an event loop to cause its fire()
+ * method to be called at a particular time.
+ *
+ */
+class timer {
+    ntime when;
+
+    io_event_loop &loop;
+
+    // No copying allowed
+    timer(const timer&);
+    timer& operator=(const timer&);
+
+public:
+    /// Constructor.
+    timer(io_event_loop& loop, ntime when = ntime::none()) :
+        when(ntime::none()), loop(loop) { arm(when); }
+
+    /// Destructor.
+    virtual ~timer() { arm(ntime::none()); }
+
+    /// Arms the timer for a particular point in time.  To disarm the
+    /// timer, use arm(ntime::none()).  To arm the timer for 1
+    /// millisecond in the future, use arm(ntime::now() +
+    /// ntime::msec(1)).
+    void arm(ntime when) {
+        if (this->when == when)
+            return;
+
+        //locking (loop.m) {
+            if (this->when) {
+                loop.timers.erase(this);
+            }
+            this->when = when;
+            if (this->when) {
+                loop.timers.insert(this);
+            }
+	    //}
+
+        loop.wake();
+    }
+
+    /// Disarms the timer.
+    void disarm() { arm(ntime::none()); }
+
+    /// Returns true if the timer is armed.
+    bool is_armed() { return when; }
+
+    /// Returns the time that the timer will fire (or ntime::none()) if
+    /// unarmed.
+    ntime get_when() { return when; }
+
+protected:
+    /// Invoked by the event loop when the timer fires.
+    virtual void fire() = 0;
+
+    friend class io_event_loop;
+};
+
+
+inline void io_handler::attach() {
+    if (loop && ioh)
+        loop->set_handler(ioh.get_fd(), this);
+}
+inline void io_handler::detach() {
+    if (loop && ioh)
+        loop->set_handler(ioh.get_fd(), 0);
+};
+
+inline void io_handler::want_read(bool act) {
+    cur_want_read = act;
+    if (loop && ioh)
+        loop->want_read(ioh.get_fd(), act);
+}
+
+inline void io_handler::want_write(bool act) {
+    cur_want_write = act;
+    if (loop && ioh)
+        loop->want_write(ioh.get_fd(), act);
+}
+
+inline bool io_event_loop::lttimerref::operator()(timer *a, timer *b) const {
+    return a->get_when() < b->get_when();
+}
+
+#ifdef USE_POLL
+inline bool io_event_loop::ltpollfd::operator()(const pollfd &a,
+						const pollfd &b) const {
+    return a.fd < b.fd;
+}
+#endif
+
+inline ntime io_event_loop::fire_timers() {
+  //locking (m) {
+        if (timers.empty()) {
+            return ntime::none();
+        }
+
+        ntime start = ntime::now();
+        timerset::iterator i;
+
+        to_fire.clear();
+
+        int count = 0;
+        for (i = timers.begin(); i != timers.end(); ++i) {
+            if ((*i)->when <= start) {
+                ++count;
+                (*i)->when = ntime::none();
+            }
+            else
+                break;
+        }
+
+        to_fire.insert(to_fire.begin(), timers.begin(), i);
+        timers.erase(timers.begin(), i);
+	//}
+
+    for (vector<timer*>::iterator j = to_fire.begin(); j != to_fire.end(); ++j) {
+        (*j)->fire();
+    }
+
+    //locking (m) {
+        if (timers.empty()) {
+            return ntime::none();
+        } else {
+            ntime time = (*(timers.begin()))->when - ntime::now();
+            if (time > ntime::usecs(0LL)) {
+                return time;
+            } else {
+                return ntime::usecs(0LL);
+            }
+        }
+	//}
+}
+
+
+
+inline void io_event_loop::run_once() {
+    event_loop_id = (unsigned long)this;
+
+    if (quit_flag) return;
+
+    ntime next;
+#ifdef USE_POLL
+    fdvec tmpfds;
+
+    next = fire_timers();
+    if (quit_flag) return;
+
+    //locking (m) {
+      tmpfds = pollfds;
+      //}
+
+    if (next) {
+      int timeout = (int)next.to_msecs();
+      ::poll(&tmpfds.front(), tmpfds.size(), timeout);
+    } else {
+      ::poll(&tmpfds.front(), tmpfds.size(), -1);
+    }    
+
+    // If another thread calls this->wake() from here on out,
+    // we're guaranteed to wake up.
+
+    if (quit_flag) return;
+
+    fdvec::iterator i;
+    for(i = tmpfds.begin(); i != tmpfds.end(); i++) {
+      hvec::iterator hdl = handlers.find(i->fd);
+
+      if (hdl == handlers.end())
+	continue;
+
+      if (i->revents & POLLIN) {
+	DEBUG << "Handling read event on " << i->fd;
+	hdl->second->ravail();
+      }
+
+      if (i->revents & POLLOUT) {
+	DEBUG << "Handling write event on " << i->fd;
+	hdl->second->wavail();
+      }
+    }
+
+#else
+    fd_set rr, ww; 
+
+    next = fire_timers();
+    if (quit_flag) return;
+
+    //locking (m) {
+        rr = readfds;
+        ww = writefds;
+	//}
+
+    // Possible race condition: someone changes timers or rr/ww here.
+    // Not a problem, though, since set_handler calls wake.
+    if (next) {
+        timeval tv = next.to_timeval();
+        DEBUG << "Calling ::select(); waiting " << next.to_msecs() << "ms";
+        ::select(maxfd+1, &rr, &ww, 0, &tv);
+    } else {
+        DEBUG << "Calling ::select() (no timers)";
+        ::select(maxfd+1, &rr, &ww, 0, 0);
+    }    
+
+    // If another thread calls this->wake() from here on out,
+    // we're guaranteed to wake up.
+
+    if (quit_flag) return;
+
+    for (int i = 0; i <= maxfd; ++i) {
+        if (handlers[i] && FD_ISSET(i, &rr)) {
+            DEBUG << "Handling read event on " << i;
+            handlers[i]->ravail();
+        }
+        if (handlers[i] && FD_ISSET(i, &ww)) {
+            DEBUG << "Handling write event on " << i;
+            handlers[i]->wavail();
+        }
+    }
+#endif
+}
+
+NMSTL_NAMESPACE_END;
+
+#endif

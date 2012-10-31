@@ -1,0 +1,21 @@
+Source: fex
+Section: net
+Priority: optional
+Maintainer: Michael Reithinger <mreithinger@web.de>
+Build-Depends: debhelper (>= 4.0.0),
+	librsync-dev, zlib1g-dev, liblog4cpp5-dev,
+	libconfuse-dev
+Standards-Version: 3.6.1
+
+Package: fex
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Suggests: ssh
+Description: file exchange daemon
+ fex is a file replication system, similar to the InterMezzo filesystem. 
+ features (beside all InterMezzo features) are:
+   - automatic compression for slow connections
+   - ssh tunneling 
+   - easy installation and administration
+   - easy conflict resolution
+

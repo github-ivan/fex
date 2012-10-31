@@ -1,0 +1,178 @@
+.TH FEX.CONF 5 "November 4, 2004"
+.SH NAME
+fex.conf \- file exchange daemon configuration file
+.SH SYNOPSIS
+The behavior of \fBfexd\fP will be controlled through its configuration file.
+By default, this is /etc/fex.conf.
+.SH FILE FORMAT
+A configuration file looks as follows:
+.RS
+.nf
+# this is a comment
+// this is a comment
+/*
+ * this is also a comment
+ */
+
+port = 3226
+ssh_user = fex
+accept_keys = yes
+create_user = yes
+
+watchpoint /var/shared/domain1 {
+   # local connection
+   import {
+      server    = file_server
+      port      = 3025
+      name      = domain1
+      translate = me2domain1
+   }
+
+   # over the internet
+   import {
+      ssh       = yes
+      server    = localhost
+      gateway   = file_server.domain1.com
+      port      = 3025
+      name      = home
+      translate = me2domain1
+   }
+
+   exclude = { "*/.*", "*.bak" }
+   include = { "*/important/*.bak" }
+   export = domain1
+   readonly = no
+}
+
+translate me2domain1 {
+   uid(1000, 1001)
+   gid(1000, 1001)
+}
+
+include("/etc/fex_domain2.conf")
+.fi
+.RE
+A configuration file has several global otions, sections and functions. Options
+are of the form \fBoption=value\fP. Value can be either a simple
+string (number) or a list of the form \fI{ value1, value2, ...,
+value<n> }\fP. Sections are of the form \fBclass identifier { options
+}\fP. Functions are of the form \fBfunc(arg1, arg2, ..., arg<n>)\fP
+
+.SS SECTIONS
+The following global sections will be recognized:
+.TP
+.BI watchpoint " path" " { options and sections }"
+Defines the file data to synchonize. \fBfexd\fP monitors the whole directory tree 
+under \fIpath\fP. 
+
+.TP
+.BI translate " name"
+A translation table for user ids and group ids. In the example above
+the user id 1000 on the client becomes the user id 1001 on the server.
+
+.TP
+The following sections will be recognized within the section \fBwatchpoint\fP:
+
+.TP
+.BI import 
+This section is used on the client site to connect to a server. The
+options inside the section define the server to connect. There may be
+multiple \fBimport\fP sections within one \fBwatchpoint\fP, to specify
+alternate servers. \fBfexd\fP tries all \fBimport\fP sections in the given
+order until it is able to connect to a server.
+
+
+.SS OPTIONS
+The following global options will be recognized:
+
+.TP
+.B port
+The port \fBfexd\fP listens for incomming connections. The default
+value is 3025. A port value of 0 disables listening.
+
+.TP
+.B ssh_command
+Path of the ssh command. The default value is /usr/bin/ssh.
+
+.TP
+.B ssh_user
+Adminstrative user for fex. Under this account the server should
+accept ssh connections.  The default value is fex
+
+.TP
+.B accept_keys
+If set to yes, a \fBfexd\fP-Client sends its ssh authorization key to
+the server and the server inserts it under
+ss_user/.ssh/authorized_keys. This option is for the following
+scenario: A fileserver can be directly reached through the internet
+over ssh and internally over port 3025. When a computer is first
+connected over the intranet it also transmits its authorisation
+key. Therefore the computer can reach the fileserver also over ssh
+with no additional configuration. The default value is yes.
+
+.TP
+.B create_user
+If set to yes, creates the ssh_user if it doesn't exist. The default value is yes.
+
+.TP
+The following options will be recognized within the section \fBwatchpoint\fP:
+.TP
+.B exclude
+A list of file patterns to exclude from monitoring
+.TP
+.B include
+A list of file patterns to include for monitoring
+.TP
+.B export
+The export name for the \fBwatchpoint\fP. On the client side this name has to be specified as
+the \fBname\fP-option inside the \fBimport\fP section.
+.TP
+.B readonly
+If set to yes the server will not accept files from the clients. If a file is changed
+at the client, the server will resynchronize the file.
+.TP
+The following options will be recognized within the section \fBimport\fP:
+.TP
+.B server
+The name or the ip-address of the server.
+.TP
+.B port
+The port to connect to the server.
+.TP
+.B name
+The export name of the server watchpoint
+.TP
+.B translate
+The name of a translation table
+.TP
+.B ssh
+If set to yes, the connection will be established through ssh tunneling.
+.TP
+.B gateway
+The ssh host a \fBfexd\fP-Client tries to connect to. 
+
+
+.SS Functions
+The following global function will be recognized:
+.TP
+.BI include ("filename")
+Includes the content of \fIfilename\fP in the current configuration.
+.TP
+The following functions will be recognized within the section \fBtranslate\fP:
+.TP
+.BI uid ("client_user_id" , " server_user_id")
+Maps a user id of \fIclient_user_id\fP on the client to the user id
+\fIserver_user_id\fP on the server.
+.TP
+.BI gid ("client_group_id" , " server_group_id")
+Maps a group id of \fIclient_group_id\fP on the client to the group id
+\fIserver_group_id\fP on the server.
+
+.SH SEE ALSO
+.BR fexd (8).
+
+.SH AUTHOR
+Michael Reithinger <mreithinger@web.de>.
+
+
+	

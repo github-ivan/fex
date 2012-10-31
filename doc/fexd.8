@@ -1,0 +1,91 @@
+.\"                              hey, Emacs:   -*- nroff -*-
+.\" fexd is free software; you can redistribute it and/or modify
+.\" it under the terms of the GNU General Public License as published by
+.\" the Free Software Foundation; either version 2 of the License, or
+.\" (at your option) any later version.
+.\"
+.\" This program is distributed in the hope that it will be useful,
+.\" but WITHOUT ANY WARRANTY; without even the implied warranty of
+.\" MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+.\" GNU General Public License for more details.
+.\"
+.\" You should have received a copy of the GNU General Public License
+.\" along with this program; see the file COPYING.  If not, write to
+.\" the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
+.\"
+.TH FEXD 8 "November 4, 2004"
+.\" Please update the above date whenever this man page is modified.
+.\"
+.\" Some roff macros, for reference:
+.\" .nh        disable hyphenation
+.\" .hy        enable hyphenation
+.\" .ad l      left justify
+.\" .ad b      justify to both left and right margins (default)
+.\" .nf        disable filling
+.\" .fi        enable filling
+.\" .br        insert line break
+.\" .sp <n>    insert n+1 empty lines
+.\" for manpage-specific macros, see man(7)
+.SH NAME
+fexd \- file exchange daemon
+.SH SYNOPSIS
+.B fexd
+.RB [ -dvglID ]
+[ \fB-c\fP \fIconfig_file\fP ]
+.SH DESCRIPTION
+\fBfexd\fP is a disconnected network file system very similar to
+intermezzo (and not so similar to coda). In contrast to these two
+\fBfexd\fP needs no kernel modules to operate. \fBfexd\fP replicates
+shared files on all computers in the network.  When a disconnected
+computer is reconnected \fBfexd\fP reintigrates all changes an
+synchronizes the network with the reconnected computer. Unlike coda
+\fBfexd\fP has no explicit authentication and authorisation mechanism.
+.SS Conflicts
+A conflict can arise when two disconnected sites change a file. After
+reconnection two different versions of the same file exist. \fBfexd\fP
+resolves conflicts by renaming one of the conflicting versions:
+\fIfilename.ext\fP becomes \fIfilename-<revno>.ext\fP where
+\fI<revno>\fP is the revision number of the backup starting with 1.
+.SS SSH Tunneling
+If two sites are connected over an unsecure line. \fBfexd\fP can be 
+configured to automaticly use ssh tunneling. \fBfexd\fP uses key authentication
+for connecting a ssh server. 
+.SS UID and GID Translation
+If the user ids and group ids differ for the same user at different sites.
+\fBfexd\fP is able to translate these ids.
+.SS File locking
+\fBfexd\fP only supports locks on the whole file. If one site locks a file, 
+the lock will be distributed over the network. If a site gets disconnected
+while holding a lock the lock will be released.
+.SH OPTIONS
+\fBfexd\fP accepts the following options:
+.TP
+.BR -d ", " --debug
+Do not deamonize, print messages to stdout. Repeating this 
+options increases the message level.
+.TP
+.BR  -v ", " --verbose
+Be verbose, write messages to the syslog. Repeating this options 
+increases the message level.
+.TP
+.BR  -l ", " --no-locks
+Disable lock, detection mechnism. If you do not need 
+lock distribution over the network you can can turn on 
+this option, because the detection mechanism is can be expensive.
+.TP
+.BR  -I ", " --no-inotify
+Dont use the inotify mechanism to detect file changes.
+.TP
+.BR  -D ", " --no-dnotify
+Dont use the dnotify mechanism to detect file changes.
+.TP
+.BR  -c ", " --config " "\fIconfigfile\fP
+Read configuration information from \fIconffile\fP. 
+.TP
+
+
+.SH SEE ALSO
+.BR fex.conf (5).
+
+.SH AUTHOR
+Michael Reithinger <mreithinger@web.de>.

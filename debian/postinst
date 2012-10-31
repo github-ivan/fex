@@ -1,0 +1,5 @@
+#! /bin/sh
+echo "---------------------------------------------------------"
+echo "Now you have to create a configuration file /etc/fex.conf"
+echo "See the manual page fex.conf.5 for an example and help"
+echo "---------------------------------------------------------"

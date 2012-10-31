@@ -1,0 +1,326 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_THREAD
+#define NMSTL_H_THREAD
+
+/** \file
+ * Threads of execution, locking, and conditions.
+ */
+
+#include <nmstl/internal.h>
+#include <nmstl/ntime>
+#include <nmstl/debug>
+
+#include <pthread.h>
+#include <cerrno>
+#include <cassert>
+
+#include <iostream>
+
+NMSTL_NAMESPACE_BEGIN;
+
+/**
+ * A non-recusive mutual-exclusion lock.
+ *
+ * You should never call lock() or unlock() on a mutex
+ * directly; instead use the guard class or the locking(x)
+ * macro:
+ *
+ * \code
+ * mutex my_mutex;
+ *
+ * int my_function()
+ * {
+ *     locking(my_mutex) {
+ *         ...
+ *     }
+ * }
+ * \endcode
+ */
+
+//const pthread_mutex_t rmutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+
+class mutex {
+    pthread_mutex_t pthm;
+    pthread_mutexattr_t pthma;
+
+    mutex(const mutex &);
+    mutex& operator = (const mutex &);
+
+  public:
+    /// Constructor.
+    mutex() {
+        pthread_mutexattr_init(&pthma);
+	pthread_mutexattr_settype(&pthma, PTHREAD_MUTEX_RECURSIVE); 
+        pthread_mutex_init(&pthm, &pthma);
+    }
+    /// Destructor.
+    ~mutex() {
+	pthread_mutex_destroy(&pthm);
+	pthread_mutexattr_destroy(&pthma);
+    }
+    /// Acquires the lock.
+    void lock() {
+	pthread_mutex_lock(&pthm);
+    }
+    /// Releases the lock.
+    void unlock() {
+	pthread_mutex_unlock(&pthm);
+    }
+
+    friend class condition;
+};
+
+/**
+ * A condition variable.
+ */
+class condition {
+    pthread_cond_t pthc;
+
+    condition(const condition &);
+    condition& operator = (const condition &);
+
+  public:
+    condition() {
+	pthread_cond_init(&pthc, 0);
+    }
+    ~condition() {
+	pthread_cond_destroy(&pthc);
+    }
+    void wait(mutex& mut) {
+	pthread_cond_wait(&pthc, &mut.pthm);
+    }
+    bool wait(mutex& mut, ntime dur) {
+	timespec tdur = dur.to_timespec();
+	int ret = pthread_cond_timedwait(&pthc, &mut.pthm, &tdur);
+	return ret == 0;
+    }
+    void signal() {
+	pthread_cond_signal(&pthc);
+    }
+    void broadcast() {
+	pthread_cond_broadcast(&pthc);
+    }
+};
+
+/**
+ * A class which acquires a lock on creating and destroys
+ * it on destruction.  It is typically used like so:
+ *
+ * \code
+ * mutex my_mutex;
+ *
+ * int my_function()
+ * {
+ *     guard g(my_mutex);
+ *     // now mutex is acquired
+ *
+ *     do_some_exclusive_stuff();
+ *     if (some_condition())
+ *         return 1;
+ *     do_other_stuff();
+ *
+ *     return 0;
+ * }
+ * \endcode
+ *
+ * The mutex is automatically released whenever the guard
+ * goes out of scope, so you don't need to worry about
+ * releasing the mutex in case of exception (e.g., in
+ * do_some_exclusive_stuff) or if a code block ends early
+ * (e.g., returns 1 in that if clause).
+ *
+ * The above function is actually better written using the
+ * locking(x) macro.
+ */
+template<class Lock = mutex>
+class guard {
+    mutable Lock* m;
+
+  public:
+    guard(const guard& g) {
+	m = g.m;
+	g.m = 0;
+    }
+    guard& operator = (const guard& g) {
+	m = g.m;
+	g.m = 0;
+	return *this;
+    }
+
+    guard(Lock& m) : m(&m) {
+	m.lock();
+    }
+    guard(Lock* m) : m(m) {
+	m->lock();
+    }
+    ~guard() {
+	if (m) m->unlock();
+    }
+
+    // for locking macro
+    operator bool() const { return false; }
+};
+
+/**
+ *
+ * A control structure which acquires a lock at the beginning of a
+ * block and releases it whenever the block exits.  It is typically
+ * used like so:
+ *
+ * \code
+ * mutex my_mutex;
+ *
+ * int my_function()
+ * {
+ *     locking (mutex) {
+ *         do_some_exclusive_stuff();
+ *         if (some_condition())
+ *             return 1;
+ *         do_other_stuff();
+ *     }
+ *
+ *     return 0;
+ * }
+ * \endcode
+ */
+#define locking(m) if (guard<> __nmstl_guard = m) { /* Never */ while(true) ; } else
+
+/**
+ *
+ * Similar to locking(m), but usable for arbitrarily-typed locks.
+ *
+ */
+#define locking_T(m, T) if (guard<T> __nmstl_guard = m) { /* Never */ while(true) ; } else
+
+#ifndef DOXYGEN_SKIP
+class __nmstl_no_lock {
+  public:
+    void lock() {}
+    void unlock() {}
+};
+#endif
+
+/// A thread of control.
+class thread {
+    enum {
+	NONE,
+	RUNNING,
+	DONE,
+	JOINED
+    } state;
+
+    pthread_t pth;
+
+    bool detached;
+    bool destroyed;
+    bool should_delete;
+    bool delete_self_ok;
+    string name;
+
+    typedef map< pthread_t, thread* > thread_map;
+    static thread_map& threads();
+    static mutex& threads_lock();
+    static thread& first_thread();
+
+    static void *launch(void *pthis);
+
+  protected:
+    virtual void run() = 0;
+    void delete_on_completion() {
+	detach();
+	should_delete = true;
+    }
+
+  public:
+    typedef pthread_t id_type;
+
+    /// Constructor (does not launch the thread; for that use start()).
+    thread(string name = string());
+
+    /// Destructor.  Note that a thread should never delete itself; it
+    /// may invoke delete_on_completion() from within run() to cause
+    /// it to be deleted once the run() method has returned.
+    virtual ~thread();
+
+    static id_type self_id() {
+        return pthread_self();
+    }
+
+    /// Starts the thread by invoking run() in the new thread.
+    void start();
+
+    /// Blocks until the thread is finished.
+    /// To be invoked only from a different thread than this one.
+    void join();
+
+    /// Detaches a thread so that it never needs to be joined.
+    void detach();
+
+    /// Sleeps for a certain duration.
+    static void sleep(ntime duration);
+
+    /// Returns an object for the currently running thread.
+    static thread& self();
+
+    /// Returns a string describing the thread.
+    string as_string() const {
+	return name.size() ? name : (string("thr" "ead-") + to_string((unsigned int)(pth)));
+    }
+};
+NMSTL_TO_STRING_INTL(thread);
+
+/**
+ * A thread of control for an object with a run() method.
+ *
+ * A threaded<T> is a thread that is also a T.
+ * When the thread is run, the T's run() method is invoked.  For example:
+ *
+ * \code
+ * threaded<io_event_loop> loop;
+ * loop.start();   // Runs the event loop in a separate thread
+ * \endcode
+ */
+template<class T>
+class threaded : public thread, public T {
+  public:
+    threaded() : T() {}
+
+    threaded(const char *ch) : T(ch) {}
+
+    template<class A1>
+    threaded(A1& a1) : T(a1) {}
+
+    template<class A1, class A2>
+    threaded(A1& a1, A2& a2) : T(a1, a2) {}
+
+    template<class A1, class A2, class A3>
+    threaded(A1& a1, A2& a2, A3& a3) : T(a1, a2, a3) {}
+
+  protected:
+    virtual void run() { T::run(); }
+};
+
+NMSTL_NAMESPACE_END;
+
+#endif

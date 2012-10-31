@@ -1,0 +1,97 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_STATUS
+#define NMSTL_H_STATUS
+
+#include <string.h>
+#include <nmstl/internal.h>
+
+NMSTL_NAMESPACE_BEGIN;
+
+/**
+ * A tuple comprising a boolean "good" flag, and a human-readable string that
+ * is a reason for failure (or success; but usually failure).
+ */
+class status {
+    bool ok;
+    string err;
+
+  public:
+    /// Constructor.  Uses a default success or failure string if err is empty.
+    status(bool ok, string err = string()) :
+        ok(ok), err(err)
+    {
+    }
+
+    /// Constructor for failure state.
+    status(string err) :
+        ok(false), err(err)
+    {
+    }
+
+    /// Constructor for failure state.
+    status(const char *err) :
+        ok(false), err(err)
+    {
+    }
+
+    /// Returns a non-null pointer if and only if the status is "good."
+    /// Useful for casting to a boolean.
+    operator const void* () const {
+        return ok ? this : 0;
+    }
+
+    /// Returns the status as a string.
+    string as_string() const {
+        if (err.empty()) return ok ? "Success" : "Unknown error";
+        return err;
+    }
+
+    /// Returns a "good" status object.
+    static status good() { return true; }
+
+    /// Returns a "bad" status object.
+    static status bad(string err = string()) { return status(false, err); }
+
+    /// Returns a "bad" status object using the system error code
+    /// err, and optionally a further description, as the failure
+    /// reason.
+    static status syserr(int errcode, string err = string()) {
+        if (err.empty())
+            return status(false, strerror(errcode));
+        else
+            return status(false, err + ": " + strerror(errcode));
+    }
+
+    /// Returns a "bad" status object using the error code contained
+    /// in errno, and optionally a further description, as the failure
+    /// reason.
+    static status syserr(string err = string()) {
+        return syserr(errno, err);
+    }
+};
+NMSTL_TO_STRING_INTL(status);
+
+NMSTL_NAMESPACE_END;
+
+#endif

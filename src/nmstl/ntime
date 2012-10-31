@@ -1,0 +1,182 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_NTIME
+#define NMSTL_H_NTIME
+
+/** \file
+ * Time.
+ */
+
+#include <nmstl/internal.h>
+#include <sys/time.h>
+
+NMSTL_NAMESPACE_BEGIN;
+
+/**
+ *
+ * A class encapsulating a duration or a point in time.
+ *
+ * This class is named ntime rather than time to avoid collisions with
+ * the ::time function.
+ *
+ */
+class ntime {
+  private:
+    long long val;
+
+    explicit ntime(long long usec) : val(usec) {}
+
+  public:
+    /// Returns the current time.
+    static ntime now() {
+	timeval tv;
+	gettimeofday(&tv, 0);
+	return ntime(tv.tv_sec * 1000000LL + tv.tv_usec);
+    }
+
+    /// Returns the current time plus a certain number of seconds.
+    static ntime now_plus_secs(long long val) {
+	return ntime::now() + ntime::secs(val);
+    }
+
+    /// Returns the current time plus a certain number of milliseconds.
+    static ntime now_plus_msecs(long long val) {
+	return ntime::now() + ntime::msecs(val);
+    }
+
+    /// Returns the current time plus a certain number of microseconds.
+    static ntime now_plus_usecs(long long val) {
+	return ntime::now() + ntime::usecs(val);
+    }
+
+    /// Default (null) constructor.
+    ntime() : val(0x8000000000000000LL) {}
+
+    /// Returns the duration in seconds.
+    long long to_secs() const { return val / 1000000LL; }
+
+    /// Returns the duration in milliseconds.
+    long long to_msecs() const { return val / 1000LL; }
+
+    /// Returns the duration in microseconds.
+    long long to_usecs() const { return val; }
+
+    /// Returns the duration as a timespec.
+    timespec to_timespec() const {
+	timespec ret;
+	ret.tv_sec = val / 1000000LL;
+	ret.tv_nsec = (val % 1000000LL) * 1000;
+	return ret;
+    }
+
+    /// Returns the duration as a timeval.
+    timeval to_timeval() const {
+	timeval ret;
+	ret.tv_sec = val / 1000000LL;
+	ret.tv_usec = val % 1000000LL;
+	return ret;
+    }
+
+    /// Returns true unless the time is equal to the special
+    /// ntime::none() value.
+    operator const void *() const {
+	return *this != none() ? this : 0;
+    }
+
+    /// Returns the sum of two times.
+    ntime operator + (ntime other) const {
+	return ntime(val + other.val);
+    }
+
+    /// Returns the difference of two times.
+    ntime operator - (ntime other) const {
+	return ntime(val - other.val);
+    }
+
+    /// Multiplies by a constant.
+    template<class T>
+    ntime operator * (T times) const {
+	return ntime(val * times);
+    }
+
+    /// Divides by a constant.
+    template<class T>
+    ntime operator / (T times) const {
+	return ntime(val / times);
+    }
+
+    /// Adds to this time.
+    ntime& operator += (ntime other) {
+	val += other.val;
+	return *this;
+    }
+
+    /// Subtracts from this time.
+    ntime& operator -= (ntime other) {
+	val -= other.val;
+	return *this;
+    }
+
+    NMSTL_ARITH_OPS(ntime, val);
+
+    /// Creates a time value corresponding to a particular number
+    /// of seconds.
+    template<class T>
+    static ntime secs(T val) { return ntime(val * 1000000LL); }
+
+    /// Creates a time value corresponding to a particular number
+    /// of seconds.
+    static ntime secs(double val) { return ntime((long long)(val * 1000000LL + 0.5)); }
+
+    /// Creates a time value corresponding to a particular number
+    /// of milliseconds.
+    template<class T>
+    static ntime msecs(T val) { return ntime(val * 1000LL); }
+
+    /// Creates a time value corresponding to a particular number
+    /// of milliseconds.
+    static ntime msecs(double val) { return ntime((long long)(val * 1000LL + 0.5)); }
+
+    /// Creates a time value corresponding to a particular number
+    /// of microseconds.
+    template<class T>
+    static ntime usecs(T val) { return ntime(val); }
+
+    /// Creates a time value corresponding to a particular number
+    /// of microseconds.
+    static ntime usecs(double val) { return ntime((long long)(val + 0.5)); }
+
+    /// Returns a special time value meaning "no time at all."
+    static ntime none() { return ntime(); }
+
+    /// Returns the time, in seconds, as a string.
+    string as_string() const { return to_string(to_usecs() / 1000000.0); }
+};
+NMSTL_TO_STRING_INTL(ntime);
+
+template<class T>
+inline ntime operator * (T t, ntime n) { return n * t; }
+
+NMSTL_NAMESPACE_END;
+
+#endif

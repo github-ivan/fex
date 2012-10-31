@@ -1,0 +1,369 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_NET
+#define NMSTL_H_NET
+
+/** \file
+ * Addresses and sockets.
+ */
+
+#include <nmstl/io>
+#include <nmstl/debug>
+#include <nmstl/serial>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/un.h>
+#include <netdb.h>
+#include <sys/socket.h>
+
+NMSTL_NAMESPACE_BEGIN;
+
+class inet_address;
+
+/**
+ *
+ * A network address (e.g., an IPv4 or IPv6 address and port, or a
+ * UNIX-domain socket path).  Addresses, like STL strings, may be
+ * passed and copied by value.
+ *
+ */
+class address {
+protected:
+    string addr;
+
+public:
+    /// Constructs an empty address.
+    address() {}
+
+    /// Constructs an address from a block of data.
+    address(const void *addr, socklen_t len) :
+	addr(static_cast<const char *>(addr), len)
+    {
+    }
+
+    // Default copy semantics
+
+    /// Returns a pointer to the data as a sockaddr.
+    const sockaddr *data() const { return static_cast<const sockaddr *>(static_cast<const void *>(addr.data())); }
+
+    /// Returns the length of the address structure.
+    socklen_t length() const { return addr.length(); }
+
+    /// Returns the address structure as a string.  The string
+    /// is <i>not</i> human-readable; rather it is a string
+    /// equal to string(this->data(), this->length()).
+    const string& data_as_string() const { return addr; }
+
+    /// Returns a non-null pointer if and only if this address is
+    /// non-empty.  This exists primarily to enable the "if (address)
+    /// { ... }" metaphor.
+    operator const void *() const { return addr.length() ? this : 0; }
+
+    /// Returns a human-readable version of the string.
+    string as_string() const;
+
+    NMSTL_ARITH_OPS(address, data_as_string());
+    NMSTL_SIMPLY_SERIALIZABLE(address, << addr );
+};
+NMSTL_TO_STRING_INTL(address);
+
+/**
+ *
+ * An IP address and port.  Currently only IPv4 addresses are
+ * supported, but this class may encapsulate IPv6 addresses as
+ * well in the future.
+ *
+ */
+class inet_address : public address {
+public:
+    /// The type used to represent a port.
+    typedef unsigned int port;
+
+protected:
+    const sockaddr_in *inetaddr() const { return static_cast<const sockaddr_in *>(static_cast<const void *>(data())); }
+
+private:
+    void init(string ip, port pt) {
+	sockaddr_in a;
+	hostent *ent;
+
+	a.sin_family = AF_INET;
+	a.sin_port = htons(pt);
+
+	if ((ent = gethostbyname(ip.c_str())) != NULL) {
+	    memcpy(&a.sin_addr.s_addr, ent->h_addr, ent->h_length);
+	    addr = string(static_cast<const char *>(static_cast<const void *>(&a)), sizeof a);
+	}
+    }
+
+public:
+    /// Constructs an empty address.
+    inet_address() {}
+
+    /// Constructs an address from a port (using INADDR_ANY as the
+    /// host).
+    inet_address(port pt) {
+	sockaddr_in a;
+	a.sin_family = AF_INET;
+	a.sin_port = htons(pt);
+	a.sin_addr.s_addr = INADDR_ANY;
+	addr = string(static_cast<const char *>(static_cast<const void *>(&a)), sizeof a);
+    }
+
+    /// Constructs an address from a host name and port.  If the host
+    /// name is not a dotted quad, this constructor will call
+    /// gethostbyname to look up the address and thus may block.
+    inet_address(string ip, port pt = 0) {
+	init(ip, pt);
+    }
+
+    /// Constructs an address from a host name and port string.  If
+    /// the host name is not a dotted quad, this constructor will call
+    /// gethostbyname to look up the address and thus may block.
+    inet_address(string ip, string pt) {
+	init(ip, atoi(pt.c_str()));
+    }
+
+    /// Coerces an address to an IP address, yielding an empty address
+    /// if the address is not an IP address.
+    explicit inet_address(const address& other) {
+	if (other && other.data()->sa_family == AF_INET)
+	    addr = other.data_as_string();
+    }
+
+    /// Returns the host as a dotted-quad string.
+    string get_host() const {
+	if (!*this) return string();
+	return inet_ntoa(inetaddr()->sin_addr);
+    }
+
+    /// Returns the hostname, as obtained by gethostbyaddr.  This method
+    /// may block.
+    string get_hostname() const {
+	if (!*this) return string();
+
+	struct hostent* ent =
+	    gethostbyaddr(static_cast<const char *>(static_cast<const void *>(&inetaddr()->sin_addr.s_addr)), sizeof(in_addr_t), AF_INET);
+
+	if (ent)
+	    return string(ent->h_name);
+
+	return get_host();
+    }
+
+    /// Returns the port (or zero if none).
+    port get_port() const {
+	if (!*this) return 0;
+	return ntohs(inetaddr()->sin_port);
+    }
+
+    /// Returns a human-readable version of this address.
+    inline string as_string() const {
+        string out = get_host();
+        if (get_port()) {
+            out += ":";
+            out += to_string(get_port());
+        }
+        return out;
+    }
+
+    static string local_hostname() {
+        char name[128];
+        if (gethostname(name, sizeof name)) return "";
+        return name;
+    }
+    
+    NMSTL_SIMPLY_SERIALIZABLE(inet_address, << addr );
+};
+
+/// A network socket descriptor.  This class will be expanded
+/// to include socket-specific I/O methods.
+class socket : public iohandle {
+  public:
+    typedef enum {
+	none = 0,
+	nonblocking = 1,
+	acceptor = 2
+    } flags;
+
+    // --nosub--
+    static int sys_socket(int a, int b, int c) { return ::socket(a, b, c); }
+    // --endnosub--
+
+  protected:
+    socket(int fd) : iohandle(fd) {}
+    socket(int family, int type) :
+        iohandle(sys_socket(family, type, 0)) {}
+
+    socket(int family, int type, address addr, flags f = none) :
+	iohandle(sys_socket(family, type, 0))
+    {
+	if (f & nonblocking)
+	    set_blocking(false);
+
+	if (addr) {
+	    if (f & acceptor) {
+		int optval = 1;
+		setsockopt(get_fd(), SOL_SOCKET, SO_REUSEADDR,
+			   &optval, sizeof optval);
+
+		bind(addr);
+		listen();
+	    } else {
+		connect(addr);
+	    }
+	}
+    }
+
+  public:
+    /// Null constructor.
+    socket() {}
+
+    /// Constructs a socket from a given iohandle.
+    socket(const iohandle& ioh) : iohandle(ioh) {}
+
+    /// Updates the socket error state if there's no current error
+    /// (useful after a connect).  Returns true if there is no error
+    /// on the socket.
+    status stat() {
+        if (iohandle::stat()) {
+            int err;
+            socklen_t size = sizeof err;
+
+            if (::getsockopt(get_fd(), SOL_SOCKET, SO_ERROR, &err, &size) == 0) {
+                if (err == 0)
+                    set_status(true);
+                else
+                    set_status(status::syserr(err));
+            }
+            else
+                set_status(status::syserr());
+        }
+
+	return iohandle::stat();
+    }
+
+    /// Returns the peer name of the socket, if any.
+    address getpeername() {
+	typedef union { sockaddr_in a; sockaddr_un b; } sockaddr_max;
+
+	char buf[sizeof(sockaddr_max) + 1];
+	socklen_t len = sizeof buf;
+
+	int ret = ::getpeername(get_fd(), (sockaddr*)&buf, &len);
+
+	if (ret < 0)
+	    return address();
+	if (len == sizeof buf) // possible overflow
+	    return address();
+
+	return address(buf, len);
+    }
+
+    /// Returns the local name of the socket, if any.
+    address getsockname() {
+	typedef union { sockaddr_in a; sockaddr_un b; } sockaddr_max;
+
+	char buf[sizeof(sockaddr_max) + 1];
+	socklen_t len = sizeof buf;
+
+	int ret = ::getsockname(get_fd(), (sockaddr*)&buf, &len);
+
+	if (ret < 0)
+	    return address();
+	if (len == sizeof buf) // possible overflow
+	    return address();
+
+	return address(buf, len);
+    }
+
+    /// Attempts to bind the socket.
+    status bind(const address& a) {
+	if (::bind(get_fd(), a.data(), a.length()) != 0) {
+            set_status(status::syserr("bind"));
+	}
+	return iohandle::stat();
+    }
+
+    /// Attempts to connect the socket.
+    status connect(const address& a) {
+	if (::connect(get_fd(), a.data(), a.length()) != 0) {
+            // EINPROGRESS is not really an error
+
+            if (errno != EINPROGRESS)
+                set_status(status::syserr("connect"));
+	}
+
+	return iohandle::stat();
+    }
+
+    /// Listens on the socket.
+    status listen(int backlog = 5) {
+	if (::listen(get_fd(), backlog) != 0) {
+            set_status(status::syserr("listen"));
+	}
+	return iohandle::stat();
+    }
+
+    /// Attempts to accept a connection on the socket.
+    socket accept(address& a) {
+	sockaddr addr;
+	socklen_t addrlen = sizeof addr;
+
+	int new_fd = ::accept(get_fd(), &addr, &addrlen);
+	if (new_fd < 0) {
+            set_status(status::syserr("accept"));
+	    a = address();
+	    return socket();
+	}
+	a = address(&addr, addrlen);
+
+	return socket(new_fd);
+    }
+};
+NMSTL_TO_STRING_INTL(inet_address);
+
+
+/// A TCP socket descriptor.  This class will be expanded to include
+/// TCP-socket-specific I/O methods, e.g., SO_LINGER support.
+class tcpsocket : public socket {
+  public:
+    /// Constructs a TCP socket.
+    tcpsocket() : socket() {}
+    tcpsocket(address addr, flags f = none) : socket(AF_INET, SOCK_STREAM, addr, f) {}
+    tcpsocket(const iohandle& ioh) : socket(ioh) {}
+};
+
+
+inline string address::as_string() const {
+    if (!*this) return string();
+    if (data()->sa_family == PF_INET)
+	return to_string(inet_address(*this));
+
+    return string();
+};
+
+NMSTL_NAMESPACE_END;
+
+#endif

@@ -1,0 +1,1084 @@
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef CALLBACK_H
+#define CALLBACK_H
+
+#include <set>
+#include <nmstl/ptr>
+
+#ifndef DOXYGEN_SKIP
+NMSTL_NAMESPACE_BEGIN;
+
+template<typename R, typename F1 = void, typename F2 = void, typename F3 = void> class callback;
+template<typename F1 = void, typename F2 = void, typename F3 = void> class listeners;
+
+template<typename R, typename F1, typename F2, typename F3>
+inline string to_string(const callback<R, F1, F2, F3>& cb) {
+    return cb.as_string();
+}
+
+template<typename R>
+class callback<R> {
+  public:
+    struct func {
+        typedef ptr<func> ptr;
+        virtual R operator () () = 0;
+        virtual ~func() {}
+    };
+    typedef ptr<func> fptr;
+
+  private:
+    mutable fptr fn;
+
+  public:
+    callback() {}
+    callback(fptr fn) : fn(fn) {}
+    callback(func* fn) : fn(fn) {}
+    R operator() () const { ASSERT(fn); return (*fn)(); }
+    string as_string() const { return "callback{" + fn.debug_repr() + "}"; }
+
+    
+    struct pfunc_0_0 : public func {
+        typedef R(*fp_t)(); fp_t fp; 
+        pfunc_0_0(fp_t fp) : fp(fp) { ASSERT(fp); }
+        R operator() () { return fp(); }
+    };
+
+    
+    static func* init( R(*fp)() ) {
+        return new pfunc_0_0(fp);
+    }
+
+    template<typename O>
+    struct ofunc_0_0 : public func {
+	O& o;
+	typedef R(O::*fp_t)(); fp_t fp; 
+        ofunc_0_0(O& o, fp_t fp) : o(o), fp(fp) { ASSERT(&o); ASSERT(fp); }
+        R operator() () { return (o.*fp)(); }
+    };
+
+    template<typename O>
+    static func* init( O& o, R(O::*fp)() ) {
+        return new ofunc_0_0<O>(o, fp);
+    }
+
+    
+    callback( R(*fp)() ) : fn( init(fp) ) {}
+    template<typename O>
+    callback( O* o, R(O::*fp)() ) : fn( init(*o, fp) ) {}
+    template<typename O>
+    callback( O& o, R(O::*fp)() ) : fn( init(o, fp) ) {}
+
+
+    template<typename B1>
+    struct pfunc_0_1 : public func {
+        typedef R(*fp_t)(B1); fp_t fp; B1 b1;
+        pfunc_0_1(fp_t fp, B1 b1) : fp(fp), b1(b1) { ASSERT(fp); }
+        R operator() () { return fp(b1); }
+    };
+
+    template<typename B1, typename B1x>
+    static func* init( R(*fp)(B1), B1x b1 ) {
+        return new pfunc_0_1<B1>(fp, b1);
+    }
+
+    template<typename O, typename B1>
+    struct ofunc_0_1 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1); fp_t fp; B1 b1;
+        ofunc_0_1(O& o, fp_t fp, B1 b1) : o(o), fp(fp), b1(b1) { ASSERT(&o); ASSERT(fp); }
+        R operator() () { return (o.*fp)(b1); }
+    };
+
+    template<typename O, typename B1, typename B1x>
+    static func* init( O& o, R(O::*fp)(B1), B1x b1 ) {
+        return new ofunc_0_1<O, B1>(o, fp, b1);
+    }
+
+    template<typename B1, typename B1x>
+    callback( R(*fp)(B1), B1x b1 ) : fn( init(fp, b1) ) {}
+    template<typename O, typename B1, typename B1x>
+    callback( O* o, R(O::*fp)(B1), B1x b1 ) : fn( init(*o, fp, b1) ) {}
+    template<typename O, typename B1, typename B1x>
+    callback( O& o, R(O::*fp)(B1), B1x b1 ) : fn( init(o, fp, b1) ) {}
+
+
+    template<typename B1, typename B2>
+    struct pfunc_0_2 : public func {
+        typedef R(*fp_t)(B1, B2); fp_t fp; B1 b1; B2 b2;
+        pfunc_0_2(fp_t fp, B1 b1, B2 b2) : fp(fp), b1(b1), b2(b2) { ASSERT(fp); }
+        R operator() () { return fp(b1, b2); }
+    };
+
+    template<typename B1, typename B1x, typename B2, typename B2x>
+    static func* init( R(*fp)(B1, B2), B1x b1, B2x b2 ) {
+        return new pfunc_0_2<B1, B2>(fp, b1, b2);
+    }
+
+    template<typename O, typename B1, typename B2>
+    struct ofunc_0_2 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, B2); fp_t fp; B1 b1; B2 b2;
+        ofunc_0_2(O& o, fp_t fp, B1 b1, B2 b2) : o(o), fp(fp), b1(b1), b2(b2) { ASSERT(&o); ASSERT(fp); }
+        R operator() () { return (o.*fp)(b1, b2); }
+    };
+
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    static func* init( O& o, R(O::*fp)(B1, B2), B1x b1, B2x b2 ) {
+        return new ofunc_0_2<O, B1, B2>(o, fp, b1, b2);
+    }
+
+    template<typename B1, typename B1x, typename B2, typename B2x>
+    callback( R(*fp)(B1, B2), B1x b1, B2x b2 ) : fn( init(fp, b1, b2) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    callback( O* o, R(O::*fp)(B1, B2), B1x b1, B2x b2 ) : fn( init(*o, fp, b1, b2) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    callback( O& o, R(O::*fp)(B1, B2), B1x b1, B2x b2 ) : fn( init(o, fp, b1, b2) ) {}
+
+
+    template<typename B1, typename B2, typename B3>
+    struct pfunc_0_3 : public func {
+        typedef R(*fp_t)(B1, B2, B3); fp_t fp; B1 b1; B2 b2; B3 b3;
+        pfunc_0_3(fp_t fp, B1 b1, B2 b2, B3 b3) : fp(fp), b1(b1), b2(b2), b3(b3) { ASSERT(fp); }
+        R operator() () { return fp(b1, b2, b3); }
+    };
+
+    template<typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    static func* init( R(*fp)(B1, B2, B3), B1x b1, B2x b2, B3x b3 ) {
+        return new pfunc_0_3<B1, B2, B3>(fp, b1, b2, b3);
+    }
+
+    template<typename O, typename B1, typename B2, typename B3>
+    struct ofunc_0_3 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, B2, B3); fp_t fp; B1 b1; B2 b2; B3 b3;
+        ofunc_0_3(O& o, fp_t fp, B1 b1, B2 b2, B3 b3) : o(o), fp(fp), b1(b1), b2(b2), b3(b3) { ASSERT(&o); ASSERT(fp); }
+        R operator() () { return (o.*fp)(b1, b2, b3); }
+    };
+
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    static func* init( O& o, R(O::*fp)(B1, B2, B3), B1x b1, B2x b2, B3x b3 ) {
+        return new ofunc_0_3<O, B1, B2, B3>(o, fp, b1, b2, b3);
+    }
+
+    template<typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( R(*fp)(B1, B2, B3), B1x b1, B2x b2, B3x b3 ) : fn( init(fp, b1, b2, b3) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( O* o, R(O::*fp)(B1, B2, B3), B1x b1, B2x b2, B3x b3 ) : fn( init(*o, fp, b1, b2, b3) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( O& o, R(O::*fp)(B1, B2, B3), B1x b1, B2x b2, B3x b3 ) : fn( init(o, fp, b1, b2, b3) ) {}
+
+
+    bool operator == (const callback<R>& other) const { return fn == other.fn; }
+    bool operator < (const callback<R>& other) const { return fn < other.fn; }
+    operator const void *() const { return fn; }
+};
+
+
+template<typename R>
+inline callback<R> wrap( R(*fp)() ) {
+    return callback<R>::init(fp);
+}
+template<typename O, typename R>
+inline callback<R> wrap( O* o, R(O::*fp)() ) {
+    return callback<R>::init(*o, fp);
+}
+template<typename O, typename R>
+inline callback<R> wrap( O& o, R(O::*fp)() ) {
+    return callback<R>::init(o, fp);
+}
+
+
+template<typename R, typename B1, typename B1x>
+inline callback<R> wrap( R(*fp)(B1), B1x b1 ) {
+    return callback<R>::init(fp, b1);
+}
+template<typename O, typename R, typename B1, typename B1x>
+inline callback<R> wrap( O* o, R(O::*fp)(B1), B1x b1 ) {
+    return callback<R>::init(*o, fp, b1);
+}
+template<typename O, typename R, typename B1, typename B1x>
+inline callback<R> wrap( O& o, R(O::*fp)(B1), B1x b1 ) {
+    return callback<R>::init(o, fp, b1);
+}
+
+
+template<typename R, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R> wrap( R(*fp)(B1, B2), B1x b1, B2x b2 ) {
+    return callback<R>::init(fp, b1, b2);
+}
+template<typename O, typename R, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R> wrap( O* o, R(O::*fp)(B1, B2), B1x b1, B2x b2 ) {
+    return callback<R>::init(*o, fp, b1, b2);
+}
+template<typename O, typename R, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R> wrap( O& o, R(O::*fp)(B1, B2), B1x b1, B2x b2 ) {
+    return callback<R>::init(o, fp, b1, b2);
+}
+
+
+template<typename R, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R> wrap( R(*fp)(B1, B2, B3), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R>::init(fp, b1, b2, b3);
+}
+template<typename O, typename R, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R> wrap( O* o, R(O::*fp)(B1, B2, B3), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R>::init(*o, fp, b1, b2, b3);
+}
+template<typename O, typename R, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R> wrap( O& o, R(O::*fp)(B1, B2, B3), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R>::init(o, fp, b1, b2, b3);
+}
+
+
+
+template<>
+class listeners<> {
+    typedef callback<void> CB;
+
+    set<CB> cbs;
+
+  public:
+    void add(CB cb) { cbs.insert(cb); }
+    void remove(CB cb) { cbs.erase(cb); }
+    void post() {
+        for (set<CB>::const_iterator i = cbs.begin(); i != cbs.end(); ++i)
+            (*i)();
+    }
+    void swap(listeners<>& other) {
+        cbs.swap(other.cbs);
+    }
+};
+
+
+template<typename R, typename F1>
+class callback<R, F1> {
+  public:
+    struct func {
+        typedef ptr<func> ptr;
+        virtual R operator () (F1) = 0;
+        virtual ~func() {}
+    };
+    typedef ptr<func> fptr;
+
+  private:
+    mutable fptr fn;
+
+  public:
+    callback() {}
+    callback(fptr fn) : fn(fn) {}
+    callback(func* fn) : fn(fn) {}
+    R operator() (F1 f1) const { ASSERT(fn); return (*fn)(f1); }
+    string as_string() const { return "callback{" + fn.debug_repr() + "}"; }
+
+    
+    struct pfunc_1_0 : public func {
+        typedef R(*fp_t)(F1); fp_t fp; 
+        pfunc_1_0(fp_t fp) : fp(fp) { ASSERT(fp); }
+        R operator() (F1 f1) { return fp(f1); }
+    };
+
+    
+    static func* init( R(*fp)(F1) ) {
+        return new pfunc_1_0(fp);
+    }
+
+    template<typename O>
+    struct ofunc_1_0 : public func {
+	O& o;
+	typedef R(O::*fp_t)(F1); fp_t fp; 
+        ofunc_1_0(O& o, fp_t fp) : o(o), fp(fp) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1) { return (o.*fp)(f1); }
+    };
+
+    template<typename O>
+    static func* init( O& o, R(O::*fp)(F1) ) {
+        return new ofunc_1_0<O>(o, fp);
+    }
+
+    
+    callback( R(*fp)(F1) ) : fn( init(fp) ) {}
+    template<typename O>
+    callback( O* o, R(O::*fp)(F1) ) : fn( init(*o, fp) ) {}
+    template<typename O>
+    callback( O& o, R(O::*fp)(F1) ) : fn( init(o, fp) ) {}
+
+
+    template<typename B1>
+    struct pfunc_1_1 : public func {
+        typedef R(*fp_t)(B1, F1); fp_t fp; B1 b1;
+        pfunc_1_1(fp_t fp, B1 b1) : fp(fp), b1(b1) { ASSERT(fp); }
+        R operator() (F1 f1) { return fp(b1, f1); }
+    };
+
+    template<typename B1, typename B1x>
+    static func* init( R(*fp)(B1, F1), B1x b1 ) {
+        return new pfunc_1_1<B1>(fp, b1);
+    }
+
+    template<typename O, typename B1>
+    struct ofunc_1_1 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, F1); fp_t fp; B1 b1;
+        ofunc_1_1(O& o, fp_t fp, B1 b1) : o(o), fp(fp), b1(b1) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1) { return (o.*fp)(b1, f1); }
+    };
+
+    template<typename O, typename B1, typename B1x>
+    static func* init( O& o, R(O::*fp)(B1, F1), B1x b1 ) {
+        return new ofunc_1_1<O, B1>(o, fp, b1);
+    }
+
+    template<typename B1, typename B1x>
+    callback( R(*fp)(B1, F1), B1x b1 ) : fn( init(fp, b1) ) {}
+    template<typename O, typename B1, typename B1x>
+    callback( O* o, R(O::*fp)(B1, F1), B1x b1 ) : fn( init(*o, fp, b1) ) {}
+    template<typename O, typename B1, typename B1x>
+    callback( O& o, R(O::*fp)(B1, F1), B1x b1 ) : fn( init(o, fp, b1) ) {}
+
+
+    template<typename B1, typename B2>
+    struct pfunc_1_2 : public func {
+        typedef R(*fp_t)(B1, B2, F1); fp_t fp; B1 b1; B2 b2;
+        pfunc_1_2(fp_t fp, B1 b1, B2 b2) : fp(fp), b1(b1), b2(b2) { ASSERT(fp); }
+        R operator() (F1 f1) { return fp(b1, b2, f1); }
+    };
+
+    template<typename B1, typename B1x, typename B2, typename B2x>
+    static func* init( R(*fp)(B1, B2, F1), B1x b1, B2x b2 ) {
+        return new pfunc_1_2<B1, B2>(fp, b1, b2);
+    }
+
+    template<typename O, typename B1, typename B2>
+    struct ofunc_1_2 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, B2, F1); fp_t fp; B1 b1; B2 b2;
+        ofunc_1_2(O& o, fp_t fp, B1 b1, B2 b2) : o(o), fp(fp), b1(b1), b2(b2) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1) { return (o.*fp)(b1, b2, f1); }
+    };
+
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    static func* init( O& o, R(O::*fp)(B1, B2, F1), B1x b1, B2x b2 ) {
+        return new ofunc_1_2<O, B1, B2>(o, fp, b1, b2);
+    }
+
+    template<typename B1, typename B1x, typename B2, typename B2x>
+    callback( R(*fp)(B1, B2, F1), B1x b1, B2x b2 ) : fn( init(fp, b1, b2) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    callback( O* o, R(O::*fp)(B1, B2, F1), B1x b1, B2x b2 ) : fn( init(*o, fp, b1, b2) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    callback( O& o, R(O::*fp)(B1, B2, F1), B1x b1, B2x b2 ) : fn( init(o, fp, b1, b2) ) {}
+
+
+    template<typename B1, typename B2, typename B3>
+    struct pfunc_1_3 : public func {
+        typedef R(*fp_t)(B1, B2, B3, F1); fp_t fp; B1 b1; B2 b2; B3 b3;
+        pfunc_1_3(fp_t fp, B1 b1, B2 b2, B3 b3) : fp(fp), b1(b1), b2(b2), b3(b3) { ASSERT(fp); }
+        R operator() (F1 f1) { return fp(b1, b2, b3, f1); }
+    };
+
+    template<typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    static func* init( R(*fp)(B1, B2, B3, F1), B1x b1, B2x b2, B3x b3 ) {
+        return new pfunc_1_3<B1, B2, B3>(fp, b1, b2, b3);
+    }
+
+    template<typename O, typename B1, typename B2, typename B3>
+    struct ofunc_1_3 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, B2, B3, F1); fp_t fp; B1 b1; B2 b2; B3 b3;
+        ofunc_1_3(O& o, fp_t fp, B1 b1, B2 b2, B3 b3) : o(o), fp(fp), b1(b1), b2(b2), b3(b3) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1) { return (o.*fp)(b1, b2, b3, f1); }
+    };
+
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    static func* init( O& o, R(O::*fp)(B1, B2, B3, F1), B1x b1, B2x b2, B3x b3 ) {
+        return new ofunc_1_3<O, B1, B2, B3>(o, fp, b1, b2, b3);
+    }
+
+    template<typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( R(*fp)(B1, B2, B3, F1), B1x b1, B2x b2, B3x b3 ) : fn( init(fp, b1, b2, b3) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( O* o, R(O::*fp)(B1, B2, B3, F1), B1x b1, B2x b2, B3x b3 ) : fn( init(*o, fp, b1, b2, b3) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( O& o, R(O::*fp)(B1, B2, B3, F1), B1x b1, B2x b2, B3x b3 ) : fn( init(o, fp, b1, b2, b3) ) {}
+
+
+    bool operator == (const callback<R, F1>& other) const { return fn == other.fn; }
+    bool operator < (const callback<R, F1>& other) const { return fn < other.fn; }
+    operator const void *() const { return fn; }
+};
+
+
+template<typename R, typename F1>
+inline callback<R, F1> wrap( R(*fp)(F1) ) {
+    return callback<R, F1>::init(fp);
+}
+template<typename O, typename R, typename F1>
+inline callback<R, F1> wrap( O* o, R(O::*fp)(F1) ) {
+    return callback<R, F1>::init(*o, fp);
+}
+template<typename O, typename R, typename F1>
+inline callback<R, F1> wrap( O& o, R(O::*fp)(F1) ) {
+    return callback<R, F1>::init(o, fp);
+}
+
+
+template<typename R, typename F1, typename B1, typename B1x>
+inline callback<R, F1> wrap( R(*fp)(B1, F1), B1x b1 ) {
+    return callback<R, F1>::init(fp, b1);
+}
+template<typename O, typename R, typename F1, typename B1, typename B1x>
+inline callback<R, F1> wrap( O* o, R(O::*fp)(B1, F1), B1x b1 ) {
+    return callback<R, F1>::init(*o, fp, b1);
+}
+template<typename O, typename R, typename F1, typename B1, typename B1x>
+inline callback<R, F1> wrap( O& o, R(O::*fp)(B1, F1), B1x b1 ) {
+    return callback<R, F1>::init(o, fp, b1);
+}
+
+
+template<typename R, typename F1, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1> wrap( R(*fp)(B1, B2, F1), B1x b1, B2x b2 ) {
+    return callback<R, F1>::init(fp, b1, b2);
+}
+template<typename O, typename R, typename F1, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1> wrap( O* o, R(O::*fp)(B1, B2, F1), B1x b1, B2x b2 ) {
+    return callback<R, F1>::init(*o, fp, b1, b2);
+}
+template<typename O, typename R, typename F1, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1> wrap( O& o, R(O::*fp)(B1, B2, F1), B1x b1, B2x b2 ) {
+    return callback<R, F1>::init(o, fp, b1, b2);
+}
+
+
+template<typename R, typename F1, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1> wrap( R(*fp)(B1, B2, B3, F1), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1>::init(fp, b1, b2, b3);
+}
+template<typename O, typename R, typename F1, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1> wrap( O* o, R(O::*fp)(B1, B2, B3, F1), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1>::init(*o, fp, b1, b2, b3);
+}
+template<typename O, typename R, typename F1, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1> wrap( O& o, R(O::*fp)(B1, B2, B3, F1), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1>::init(o, fp, b1, b2, b3);
+}
+
+
+
+template<typename F1>
+class listeners<F1> {
+    typedef callback<void, F1> CB;
+
+    set<CB> cbs;
+
+  public:
+    void add(CB cb) { cbs.insert(cb); }
+    void remove(CB cb) { cbs.erase(cb); }
+    void post(F1 f1) {
+        for (typename set<CB>::const_iterator i = cbs.begin(); i != cbs.end(); ++i)
+            (*i)(f1);
+    }
+    void swap(listeners<F1>& other) {
+        cbs.swap(other.cbs);
+    }
+};
+
+
+template<typename R, typename F1, typename F2>
+class callback<R, F1, F2> {
+  public:
+    struct func {
+        typedef ptr<func> ptr;
+        virtual R operator () (F1, F2) = 0;
+        virtual ~func() {}
+    };
+    typedef ptr<func> fptr;
+
+  private:
+    mutable fptr fn;
+
+  public:
+    callback() {}
+    callback(fptr fn) : fn(fn) {}
+    callback(func* fn) : fn(fn) {}
+    R operator() (F1 f1, F2 f2) const { ASSERT(fn); return (*fn)(f1, f2); }
+    string as_string() const { return "callback{" + fn.debug_repr() + "}"; }
+
+    
+    struct pfunc_2_0 : public func {
+        typedef R(*fp_t)(F1, F2); fp_t fp; 
+        pfunc_2_0(fp_t fp) : fp(fp) { ASSERT(fp); }
+        R operator() (F1 f1, F2 f2) { return fp(f1, f2); }
+    };
+
+    
+    static func* init( R(*fp)(F1, F2) ) {
+        return new pfunc_2_0(fp);
+    }
+
+    template<typename O>
+    struct ofunc_2_0 : public func {
+	O& o;
+	typedef R(O::*fp_t)(F1, F2); fp_t fp; 
+        ofunc_2_0(O& o, fp_t fp) : o(o), fp(fp) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1, F2 f2) { return (o.*fp)(f1, f2); }
+    };
+
+    template<typename O>
+    static func* init( O& o, R(O::*fp)(F1, F2) ) {
+        return new ofunc_2_0<O>(o, fp);
+    }
+
+    
+    callback( R(*fp)(F1, F2) ) : fn( init(fp) ) {}
+    template<typename O>
+    callback( O* o, R(O::*fp)(F1, F2) ) : fn( init(*o, fp) ) {}
+    template<typename O>
+    callback( O& o, R(O::*fp)(F1, F2) ) : fn( init(o, fp) ) {}
+
+
+    template<typename B1>
+    struct pfunc_2_1 : public func {
+        typedef R(*fp_t)(B1, F1, F2); fp_t fp; B1 b1;
+        pfunc_2_1(fp_t fp, B1 b1) : fp(fp), b1(b1) { ASSERT(fp); }
+        R operator() (F1 f1, F2 f2) { return fp(b1, f1, f2); }
+    };
+
+    template<typename B1, typename B1x>
+    static func* init( R(*fp)(B1, F1, F2), B1x b1 ) {
+        return new pfunc_2_1<B1>(fp, b1);
+    }
+
+    template<typename O, typename B1>
+    struct ofunc_2_1 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, F1, F2); fp_t fp; B1 b1;
+        ofunc_2_1(O& o, fp_t fp, B1 b1) : o(o), fp(fp), b1(b1) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1, F2 f2) { return (o.*fp)(b1, f1, f2); }
+    };
+
+    template<typename O, typename B1, typename B1x>
+    static func* init( O& o, R(O::*fp)(B1, F1, F2), B1x b1 ) {
+        return new ofunc_2_1<O, B1>(o, fp, b1);
+    }
+
+    template<typename B1, typename B1x>
+    callback( R(*fp)(B1, F1, F2), B1x b1 ) : fn( init(fp, b1) ) {}
+    template<typename O, typename B1, typename B1x>
+    callback( O* o, R(O::*fp)(B1, F1, F2), B1x b1 ) : fn( init(*o, fp, b1) ) {}
+    template<typename O, typename B1, typename B1x>
+    callback( O& o, R(O::*fp)(B1, F1, F2), B1x b1 ) : fn( init(o, fp, b1) ) {}
+
+
+    template<typename B1, typename B2>
+    struct pfunc_2_2 : public func {
+        typedef R(*fp_t)(B1, B2, F1, F2); fp_t fp; B1 b1; B2 b2;
+        pfunc_2_2(fp_t fp, B1 b1, B2 b2) : fp(fp), b1(b1), b2(b2) { ASSERT(fp); }
+        R operator() (F1 f1, F2 f2) { return fp(b1, b2, f1, f2); }
+    };
+
+    template<typename B1, typename B1x, typename B2, typename B2x>
+    static func* init( R(*fp)(B1, B2, F1, F2), B1x b1, B2x b2 ) {
+        return new pfunc_2_2<B1, B2>(fp, b1, b2);
+    }
+
+    template<typename O, typename B1, typename B2>
+    struct ofunc_2_2 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, B2, F1, F2); fp_t fp; B1 b1; B2 b2;
+        ofunc_2_2(O& o, fp_t fp, B1 b1, B2 b2) : o(o), fp(fp), b1(b1), b2(b2) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1, F2 f2) { return (o.*fp)(b1, b2, f1, f2); }
+    };
+
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    static func* init( O& o, R(O::*fp)(B1, B2, F1, F2), B1x b1, B2x b2 ) {
+        return new ofunc_2_2<O, B1, B2>(o, fp, b1, b2);
+    }
+
+    template<typename B1, typename B1x, typename B2, typename B2x>
+    callback( R(*fp)(B1, B2, F1, F2), B1x b1, B2x b2 ) : fn( init(fp, b1, b2) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    callback( O* o, R(O::*fp)(B1, B2, F1, F2), B1x b1, B2x b2 ) : fn( init(*o, fp, b1, b2) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    callback( O& o, R(O::*fp)(B1, B2, F1, F2), B1x b1, B2x b2 ) : fn( init(o, fp, b1, b2) ) {}
+
+
+    template<typename B1, typename B2, typename B3>
+    struct pfunc_2_3 : public func {
+        typedef R(*fp_t)(B1, B2, B3, F1, F2); fp_t fp; B1 b1; B2 b2; B3 b3;
+        pfunc_2_3(fp_t fp, B1 b1, B2 b2, B3 b3) : fp(fp), b1(b1), b2(b2), b3(b3) { ASSERT(fp); }
+        R operator() (F1 f1, F2 f2) { return fp(b1, b2, b3, f1, f2); }
+    };
+
+    template<typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    static func* init( R(*fp)(B1, B2, B3, F1, F2), B1x b1, B2x b2, B3x b3 ) {
+        return new pfunc_2_3<B1, B2, B3>(fp, b1, b2, b3);
+    }
+
+    template<typename O, typename B1, typename B2, typename B3>
+    struct ofunc_2_3 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, B2, B3, F1, F2); fp_t fp; B1 b1; B2 b2; B3 b3;
+        ofunc_2_3(O& o, fp_t fp, B1 b1, B2 b2, B3 b3) : o(o), fp(fp), b1(b1), b2(b2), b3(b3) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1, F2 f2) { return (o.*fp)(b1, b2, b3, f1, f2); }
+    };
+
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    static func* init( O& o, R(O::*fp)(B1, B2, B3, F1, F2), B1x b1, B2x b2, B3x b3 ) {
+        return new ofunc_2_3<O, B1, B2, B3>(o, fp, b1, b2, b3);
+    }
+
+    template<typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( R(*fp)(B1, B2, B3, F1, F2), B1x b1, B2x b2, B3x b3 ) : fn( init(fp, b1, b2, b3) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( O* o, R(O::*fp)(B1, B2, B3, F1, F2), B1x b1, B2x b2, B3x b3 ) : fn( init(*o, fp, b1, b2, b3) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( O& o, R(O::*fp)(B1, B2, B3, F1, F2), B1x b1, B2x b2, B3x b3 ) : fn( init(o, fp, b1, b2, b3) ) {}
+
+
+    bool operator == (const callback<R, F1, F2>& other) const { return fn == other.fn; }
+    bool operator < (const callback<R, F1, F2>& other) const { return fn < other.fn; }
+    operator const void *() const { return fn; }
+};
+
+
+template<typename R, typename F1, typename F2>
+inline callback<R, F1, F2> wrap( R(*fp)(F1, F2) ) {
+    return callback<R, F1, F2>::init(fp);
+}
+template<typename O, typename R, typename F1, typename F2>
+inline callback<R, F1, F2> wrap( O* o, R(O::*fp)(F1, F2) ) {
+    return callback<R, F1, F2>::init(*o, fp);
+}
+template<typename O, typename R, typename F1, typename F2>
+inline callback<R, F1, F2> wrap( O& o, R(O::*fp)(F1, F2) ) {
+    return callback<R, F1, F2>::init(o, fp);
+}
+
+
+template<typename R, typename F1, typename F2, typename B1, typename B1x>
+inline callback<R, F1, F2> wrap( R(*fp)(B1, F1, F2), B1x b1 ) {
+    return callback<R, F1, F2>::init(fp, b1);
+}
+template<typename O, typename R, typename F1, typename F2, typename B1, typename B1x>
+inline callback<R, F1, F2> wrap( O* o, R(O::*fp)(B1, F1, F2), B1x b1 ) {
+    return callback<R, F1, F2>::init(*o, fp, b1);
+}
+template<typename O, typename R, typename F1, typename F2, typename B1, typename B1x>
+inline callback<R, F1, F2> wrap( O& o, R(O::*fp)(B1, F1, F2), B1x b1 ) {
+    return callback<R, F1, F2>::init(o, fp, b1);
+}
+
+
+template<typename R, typename F1, typename F2, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1, F2> wrap( R(*fp)(B1, B2, F1, F2), B1x b1, B2x b2 ) {
+    return callback<R, F1, F2>::init(fp, b1, b2);
+}
+template<typename O, typename R, typename F1, typename F2, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1, F2> wrap( O* o, R(O::*fp)(B1, B2, F1, F2), B1x b1, B2x b2 ) {
+    return callback<R, F1, F2>::init(*o, fp, b1, b2);
+}
+template<typename O, typename R, typename F1, typename F2, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1, F2> wrap( O& o, R(O::*fp)(B1, B2, F1, F2), B1x b1, B2x b2 ) {
+    return callback<R, F1, F2>::init(o, fp, b1, b2);
+}
+
+
+template<typename R, typename F1, typename F2, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1, F2> wrap( R(*fp)(B1, B2, B3, F1, F2), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1, F2>::init(fp, b1, b2, b3);
+}
+template<typename O, typename R, typename F1, typename F2, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1, F2> wrap( O* o, R(O::*fp)(B1, B2, B3, F1, F2), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1, F2>::init(*o, fp, b1, b2, b3);
+}
+template<typename O, typename R, typename F1, typename F2, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1, F2> wrap( O& o, R(O::*fp)(B1, B2, B3, F1, F2), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1, F2>::init(o, fp, b1, b2, b3);
+}
+
+
+
+template<typename F1, typename F2>
+class listeners<F1, F2> {
+    typedef callback<void, F1, F2> CB;
+
+    set<CB> cbs;
+
+  public:
+    void add(CB cb) { cbs.insert(cb); }
+    void remove(CB cb) { cbs.erase(cb); }
+    void post(F1 f1, F2 f2) {
+        for (typename set<CB>::const_iterator i = cbs.begin(); i != cbs.end(); ++i)
+            (*i)(f1, f2);
+    }
+    void swap(listeners<F1, F2>& other) {
+        cbs.swap(other.cbs);
+    }
+};
+
+
+template<typename R, typename F1, typename F2, typename F3>
+class callback {
+  public:
+    struct func {
+        typedef ptr<func> ptr;
+        virtual R operator () (F1, F2, F3) = 0;
+        virtual ~func() {}
+    };
+    typedef ptr<func> fptr;
+
+  private:
+    mutable fptr fn;
+
+  public:
+    callback() {}
+    callback(fptr fn) : fn(fn) {}
+    callback(func* fn) : fn(fn) {}
+    R operator() (F1 f1, F2 f2, F3 f3) const { ASSERT(fn); return (*fn)(f1, f2, f3); }
+    string as_string() const { return "callback{" + fn.debug_repr() + "}"; }
+
+    
+    struct pfunc_3_0 : public func {
+        typedef R(*fp_t)(F1, F2, F3); fp_t fp; 
+        pfunc_3_0(fp_t fp) : fp(fp) { ASSERT(fp); }
+        R operator() (F1 f1, F2 f2, F3 f3) { return fp(f1, f2, f3); }
+    };
+
+    
+    static func* init( R(*fp)(F1, F2, F3) ) {
+        return new pfunc_3_0(fp);
+    }
+
+    template<typename O>
+    struct ofunc_3_0 : public func {
+	O& o;
+	typedef R(O::*fp_t)(F1, F2, F3); fp_t fp; 
+        ofunc_3_0(O& o, fp_t fp) : o(o), fp(fp) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1, F2 f2, F3 f3) { return (o.*fp)(f1, f2, f3); }
+    };
+
+    template<typename O>
+    static func* init( O& o, R(O::*fp)(F1, F2, F3) ) {
+        return new ofunc_3_0<O>(o, fp);
+    }
+
+    
+    callback( R(*fp)(F1, F2, F3) ) : fn( init(fp) ) {}
+    template<typename O>
+    callback( O* o, R(O::*fp)(F1, F2, F3) ) : fn( init(*o, fp) ) {}
+    template<typename O>
+    callback( O& o, R(O::*fp)(F1, F2, F3) ) : fn( init(o, fp) ) {}
+
+
+    template<typename B1>
+    struct pfunc_3_1 : public func {
+        typedef R(*fp_t)(B1, F1, F2, F3); fp_t fp; B1 b1;
+        pfunc_3_1(fp_t fp, B1 b1) : fp(fp), b1(b1) { ASSERT(fp); }
+        R operator() (F1 f1, F2 f2, F3 f3) { return fp(b1, f1, f2, f3); }
+    };
+
+    template<typename B1, typename B1x>
+    static func* init( R(*fp)(B1, F1, F2, F3), B1x b1 ) {
+        return new pfunc_3_1<B1>(fp, b1);
+    }
+
+    template<typename O, typename B1>
+    struct ofunc_3_1 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, F1, F2, F3); fp_t fp; B1 b1;
+        ofunc_3_1(O& o, fp_t fp, B1 b1) : o(o), fp(fp), b1(b1) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1, F2 f2, F3 f3) { return (o.*fp)(b1, f1, f2, f3); }
+    };
+
+    template<typename O, typename B1, typename B1x>
+    static func* init( O& o, R(O::*fp)(B1, F1, F2, F3), B1x b1 ) {
+        return new ofunc_3_1<O, B1>(o, fp, b1);
+    }
+
+    template<typename B1, typename B1x>
+    callback( R(*fp)(B1, F1, F2, F3), B1x b1 ) : fn( init(fp, b1) ) {}
+    template<typename O, typename B1, typename B1x>
+    callback( O* o, R(O::*fp)(B1, F1, F2, F3), B1x b1 ) : fn( init(*o, fp, b1) ) {}
+    template<typename O, typename B1, typename B1x>
+    callback( O& o, R(O::*fp)(B1, F1, F2, F3), B1x b1 ) : fn( init(o, fp, b1) ) {}
+
+
+    template<typename B1, typename B2>
+    struct pfunc_3_2 : public func {
+        typedef R(*fp_t)(B1, B2, F1, F2, F3); fp_t fp; B1 b1; B2 b2;
+        pfunc_3_2(fp_t fp, B1 b1, B2 b2) : fp(fp), b1(b1), b2(b2) { ASSERT(fp); }
+        R operator() (F1 f1, F2 f2, F3 f3) { return fp(b1, b2, f1, f2, f3); }
+    };
+
+    template<typename B1, typename B1x, typename B2, typename B2x>
+    static func* init( R(*fp)(B1, B2, F1, F2, F3), B1x b1, B2x b2 ) {
+        return new pfunc_3_2<B1, B2>(fp, b1, b2);
+    }
+
+    template<typename O, typename B1, typename B2>
+    struct ofunc_3_2 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, B2, F1, F2, F3); fp_t fp; B1 b1; B2 b2;
+        ofunc_3_2(O& o, fp_t fp, B1 b1, B2 b2) : o(o), fp(fp), b1(b1), b2(b2) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1, F2 f2, F3 f3) { return (o.*fp)(b1, b2, f1, f2, f3); }
+    };
+
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    static func* init( O& o, R(O::*fp)(B1, B2, F1, F2, F3), B1x b1, B2x b2 ) {
+        return new ofunc_3_2<O, B1, B2>(o, fp, b1, b2);
+    }
+
+    template<typename B1, typename B1x, typename B2, typename B2x>
+    callback( R(*fp)(B1, B2, F1, F2, F3), B1x b1, B2x b2 ) : fn( init(fp, b1, b2) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    callback( O* o, R(O::*fp)(B1, B2, F1, F2, F3), B1x b1, B2x b2 ) : fn( init(*o, fp, b1, b2) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x>
+    callback( O& o, R(O::*fp)(B1, B2, F1, F2, F3), B1x b1, B2x b2 ) : fn( init(o, fp, b1, b2) ) {}
+
+
+    template<typename B1, typename B2, typename B3>
+    struct pfunc_3_3 : public func {
+        typedef R(*fp_t)(B1, B2, B3, F1, F2, F3); fp_t fp; B1 b1; B2 b2; B3 b3;
+        pfunc_3_3(fp_t fp, B1 b1, B2 b2, B3 b3) : fp(fp), b1(b1), b2(b2), b3(b3) { ASSERT(fp); }
+        R operator() (F1 f1, F2 f2, F3 f3) { return fp(b1, b2, b3, f1, f2, f3); }
+    };
+
+    template<typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    static func* init( R(*fp)(B1, B2, B3, F1, F2, F3), B1x b1, B2x b2, B3x b3 ) {
+        return new pfunc_3_3<B1, B2, B3>(fp, b1, b2, b3);
+    }
+
+    template<typename O, typename B1, typename B2, typename B3>
+    struct ofunc_3_3 : public func {
+	O& o;
+	typedef R(O::*fp_t)(B1, B2, B3, F1, F2, F3); fp_t fp; B1 b1; B2 b2; B3 b3;
+        ofunc_3_3(O& o, fp_t fp, B1 b1, B2 b2, B3 b3) : o(o), fp(fp), b1(b1), b2(b2), b3(b3) { ASSERT(&o); ASSERT(fp); }
+        R operator() (F1 f1, F2 f2, F3 f3) { return (o.*fp)(b1, b2, b3, f1, f2, f3); }
+    };
+
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    static func* init( O& o, R(O::*fp)(B1, B2, B3, F1, F2, F3), B1x b1, B2x b2, B3x b3 ) {
+        return new ofunc_3_3<O, B1, B2, B3>(o, fp, b1, b2, b3);
+    }
+
+    template<typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( R(*fp)(B1, B2, B3, F1, F2, F3), B1x b1, B2x b2, B3x b3 ) : fn( init(fp, b1, b2, b3) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( O* o, R(O::*fp)(B1, B2, B3, F1, F2, F3), B1x b1, B2x b2, B3x b3 ) : fn( init(*o, fp, b1, b2, b3) ) {}
+    template<typename O, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+    callback( O& o, R(O::*fp)(B1, B2, B3, F1, F2, F3), B1x b1, B2x b2, B3x b3 ) : fn( init(o, fp, b1, b2, b3) ) {}
+
+
+    bool operator == (const callback<R, F1, F2, F3>& other) const { return fn == other.fn; }
+    bool operator < (const callback<R, F1, F2, F3>& other) const { return fn < other.fn; }
+    operator const void *() const { return fn; }
+};
+
+
+template<typename R, typename F1, typename F2, typename F3>
+inline callback<R, F1, F2, F3> wrap( R(*fp)(F1, F2, F3) ) {
+    return callback<R, F1, F2, F3>::init(fp);
+}
+template<typename O, typename R, typename F1, typename F2, typename F3>
+inline callback<R, F1, F2, F3> wrap( O* o, R(O::*fp)(F1, F2, F3) ) {
+    return callback<R, F1, F2, F3>::init(*o, fp);
+}
+template<typename O, typename R, typename F1, typename F2, typename F3>
+inline callback<R, F1, F2, F3> wrap( O& o, R(O::*fp)(F1, F2, F3) ) {
+    return callback<R, F1, F2, F3>::init(o, fp);
+}
+
+
+template<typename R, typename F1, typename F2, typename F3, typename B1, typename B1x>
+inline callback<R, F1, F2, F3> wrap( R(*fp)(B1, F1, F2, F3), B1x b1 ) {
+    return callback<R, F1, F2, F3>::init(fp, b1);
+}
+template<typename O, typename R, typename F1, typename F2, typename F3, typename B1, typename B1x>
+inline callback<R, F1, F2, F3> wrap( O* o, R(O::*fp)(B1, F1, F2, F3), B1x b1 ) {
+    return callback<R, F1, F2, F3>::init(*o, fp, b1);
+}
+template<typename O, typename R, typename F1, typename F2, typename F3, typename B1, typename B1x>
+inline callback<R, F1, F2, F3> wrap( O& o, R(O::*fp)(B1, F1, F2, F3), B1x b1 ) {
+    return callback<R, F1, F2, F3>::init(o, fp, b1);
+}
+
+
+template<typename R, typename F1, typename F2, typename F3, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1, F2, F3> wrap( R(*fp)(B1, B2, F1, F2, F3), B1x b1, B2x b2 ) {
+    return callback<R, F1, F2, F3>::init(fp, b1, b2);
+}
+template<typename O, typename R, typename F1, typename F2, typename F3, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1, F2, F3> wrap( O* o, R(O::*fp)(B1, B2, F1, F2, F3), B1x b1, B2x b2 ) {
+    return callback<R, F1, F2, F3>::init(*o, fp, b1, b2);
+}
+template<typename O, typename R, typename F1, typename F2, typename F3, typename B1, typename B1x, typename B2, typename B2x>
+inline callback<R, F1, F2, F3> wrap( O& o, R(O::*fp)(B1, B2, F1, F2, F3), B1x b1, B2x b2 ) {
+    return callback<R, F1, F2, F3>::init(o, fp, b1, b2);
+}
+
+
+template<typename R, typename F1, typename F2, typename F3, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1, F2, F3> wrap( R(*fp)(B1, B2, B3, F1, F2, F3), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1, F2, F3>::init(fp, b1, b2, b3);
+}
+template<typename O, typename R, typename F1, typename F2, typename F3, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1, F2, F3> wrap( O* o, R(O::*fp)(B1, B2, B3, F1, F2, F3), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1, F2, F3>::init(*o, fp, b1, b2, b3);
+}
+template<typename O, typename R, typename F1, typename F2, typename F3, typename B1, typename B1x, typename B2, typename B2x, typename B3, typename B3x>
+inline callback<R, F1, F2, F3> wrap( O& o, R(O::*fp)(B1, B2, B3, F1, F2, F3), B1x b1, B2x b2, B3x b3 ) {
+    return callback<R, F1, F2, F3>::init(o, fp, b1, b2, b3);
+}
+
+
+
+template<typename F1, typename F2, typename F3>
+class listeners {
+    typedef callback<void, F1, F2, F3> CB;
+
+    set<CB> cbs;
+
+  public:
+    void add(CB cb) { cbs.insert(cb); }
+    void remove(CB cb) { cbs.erase(cb); }
+    void post(F1 f1, F2 f2, F3 f3) {
+        for (typename set<CB>::const_iterator i = cbs.begin(); i != cbs.end(); ++i)
+            (*i)(f1, f2, f3);
+    }
+    void swap(listeners<F1, F2, F3>& other) {
+        cbs.swap(other.cbs);
+    }
+};
+
+
+NMSTL_NAMESPACE_END;
+
+#else // def DOXYGEN_SKIP
+
+/**
+ * Generic callbacks.
+ *
+ * A callback<R, T1, T2...> is a function that you can call with
+ * arguments T1, T2, ... and obtain a result of type R.  (R may
+ * be void, and there can be zero or more arguments.)  For instance:
+ *
+ * <ul>
+ * <li>callback<void> is a function which takes no arguments and returns no result.
+ * <li>callback<string, int> is a function which takes an int as a input and returns a string.
+ * <li>callback<string, int, vector<int> > is a function which takes an int and a vector<int>
+ * as input and returns a string.
+ * </ul>
+ *
+ * You can invoke a callback just as you'd invoke a function:
+ *
+ * de
+ * callback<string, int, bool> my_callback = ...;
+ * string s = my_callback(3, true);
+ * ndcode
+ *
+ * To create a callback on a function, pass a pointer to the
+ * function as the first
+ * argument to the callback constructor:
+ *
+ * de
+ * string my_function(int a, bool b);
+ * callback<string, int, bool> my_callback(&my_function);
+ *   ...
+ *
+ * // later
+ * string s = my_callback(3, true);
+ * ndcode
+ *
+ * You can also "bind" arguments to your function.  They are stored
+ * in the callback object and are passed to your function when it is
+ * invoked later:
+ *
+ * de
+ * string my_function(int a, bool b);
+ * callback<string, bool> my_callback(&my_function, 3);
+ * // N.B.: no "int" in type, since we've already specified the int
+ * // in the callback constructor!
+ *   ...
+ * 
+ * // later
+ * string s = my_callback(true);
+ * ndcode
+ *
+ * You may also create callbacks from method pointers to objects; just pass a
+ * pointer or reference to the object as the first argument to the constructor, and the method
+ * pointer second.  (Note that create a method pointer in ISO C++, you
+ * must use the syntax &ClassName::method_name; compilers are not
+ * supposed to let you simply say &method_name within the class.)
+ *
+ * de
+ * class MyFooClass {
+ *     int some_instance_variable;
+ *
+ *   public:
+ *     string bar(int a, bool b);
+ * };
+ *
+ * MyFooClass &foo;
+ * callback<string, int, bool> my_callback_1(foo, &MyFooClass::bar);
+ * callback<string, bool> my_callback(foo, &MyFooClass::bar, 3);
+ *   ...
+ *
+ * // later
+ * string s = my_callback(3, true);
+ * string t = my_callback(true);
+ * ndcode
+ *
+ * Callbacks may be passed by value.  As the name "callback" suggests,
+ * one generally creates a callback and passes it to other code, which
+ * then invokes the callback at some later point.  For instance:
+ *
+ * class my_thread : public thread {
+ *   public:
+ *     callback<bool, int> notifier;
+ *
+ *     void run() {
+ *         while (1) {
+ *             int result;
+ *
+ *             // perform some lengthy operation
+ *               ...
+ *
+ *         // Notify the caller that we're done, and what the
+ *         // result was.
+ *         bool happy = notifier(result);
+ *
+ *         if (happy)
+ *         
+ *     
+ *
+ **/
+template<class R, class T1, class T2, class etc>
+class callback {
+    R operator() (T1 t1, T2 t2, etc...) const;
+};
+
+#endif // ndef DOXYGEN_SKIP
+#endif // ndef CALLBACK_H
+
+
+

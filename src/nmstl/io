@@ -1,0 +1,462 @@
+// -*- mode: C++; -*-
+
+/*
+ * NMSTL, the Networking, Messaging, Servers, and Threading Library for C++
+ * Copyright (c) 2002 Massachusetts Institute of Technology
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef NMSTL_H_IO
+#define NMSTL_H_IO
+
+/**
+ * Data buffers and I/O handles.
+ */
+
+#include <nmstl/internal.h>
+#include <nmstl/ptr>
+#include <nmstl/status>
+
+#include <unistd.h>
+#include <fcntl.h>
+#include <cassert>
+#include <cerrno>
+
+NMSTL_NAMESPACE_BEGIN;
+
+/// An immutable data buffer.  Equivalent to a pair<const void*,
+/// size_t>: this is just a convenient way of passing a reference to
+/// an immutable data buffer.
+class constbuf {
+  protected:
+    char *dat;
+    unsigned int len;
+
+  public:
+    /// Null constructor.
+    constbuf() : dat(0), len(0) {}
+
+    /// Constructs a reference to an immutable data buffer.
+    constbuf(const void *dat, unsigned int len) :
+        dat(static_cast<char*>(const_cast<void*>(dat))), len(len) {}
+
+    /// Constructs a reference to a string.  This constbuf will cease
+    /// to be valid whenever the value of s.data() changes, i.e.,
+    /// whenever any of s's iterators are invalidated or the string
+    /// is destructed.
+    explicit constbuf(const string& s) :
+        dat(const_cast<char*>(s.data())), len(s.length()) {}
+        
+    /// Returns a pointer to the beginning of the data buffer.
+    const char *data() const { return dat; }
+
+    /// Returns the length of the data buffer.
+    unsigned int length() const { return len; }
+
+    /// Returns a non-null value if the data buffer is non-null.
+    /// Exists to enable the if (buf) { ... } metaphor.
+    operator const void *() const { return dat; }
+
+    /// Returns the constbuf as a string (always makes a copy).
+    operator string() const { return string(dat, len); }
+
+    /// Returns a human-readable representation of the data buffer.
+    string as_string() const {
+	return dat ? "\"" + to_escaped_string(dat, len) + "\"" : "\"\"";
+    }
+};
+NMSTL_TO_STRING_INTL(constbuf);
+
+/// A mutable data buffer.  Basically equivalent to a pair<void *,
+/// size_t>: this is just a convenient way of passing a reference to a
+/// mutable data buffer.
+///
+/// A databuf actually contains both a "current length" and a "maximum
+/// length" for the data buffer; for instance, one may allocate <i>n</i>
+/// bytes of storage, and the constructor <code>databuf(mem, 0, <i>n</i>)</code>
+/// to reflect the fact that there is currently no data in the buffer
+/// but that it has space for a kilobyte of data.  Input routines such as
+/// iohandle::read generally read up to <code>max_length()</code> bytes
+/// and use <code>set_length()</code> to reflect the number of bytes
+/// actually nead.
+///
+/// \code
+/// char *mem = malloc(1024);
+/// databuf buf(mem, 0, 1024);
+/// my_iohandle.read(buf); // read up to 1024 bytes
+/// cout << "I just read " << buf.length() << " bytes" << endl;
+/// \endcode
+///
+/// Note that a databuf may be cast to a constbuf (just as a void * can be
+/// implicitly cast to a const void *) but not vice versa.
+class databuf : public constbuf {
+  protected:
+    unsigned int maxlen;
+
+  public:
+    /// Null constructor.
+    databuf() : constbuf() {}
+
+    /// Constructs a reference to a mutable data buffer.  Both its current
+    /// length and maximum length are <i>len</i>.
+    databuf(void *dat, unsigned int len) : constbuf(dat, len), maxlen(len) {}
+
+    /// Constructs a reference to a mutable data buffer whose size
+    /// may change.
+    ///
+    /// @param dat a pointer to the data buffer.
+    /// @param len the current length of the data buffer.
+    /// @param maxlen the maximum length of the data buffer.
+    databuf(void *dat, unsigned int len, unsigned int maxlen) :
+        constbuf(dat, len), maxlen(maxlen) {}
+        
+    /// Returns a pointer to the beginning of the data buffer.
+    char *data() { return dat; }
+
+    /// Modifies the length of the data buffer
+    void set_length(unsigned int len) {
+        this->len = len;
+    }
+
+    /// Returns the maximum length of the data buffer.
+    unsigned int max_length() const { return maxlen; }
+};
+
+/// A dynamically allocated, reference-counted mutable data buffer.
+///
+/// Constructing a dynbuf object allocates a fixed amount of memory,
+/// which is automatically deallocated when the last dynbuf pointing
+/// to that memory is deleted.
+///
+/// Note that a dynbuf may be cast to a databuf or a constbuf, but
+/// not vice versa.  Also, copying a dynbuf to a databuf or constbuf
+/// does <i>not</i> create another reference to the underlying data.
+class dynbuf : public databuf {
+    atomic *ref;
+
+  private:
+    void acquire() { if (ref) ++*ref; }
+    void release() {
+        if (ref && *(ref--) == 0) {
+            delete[] dat;
+            delete ref;
+        }
+    }
+
+  public:
+    /// Null constructor.
+    dynbuf() : databuf(), ref(0) {}
+
+    /// Dynamically allocates a data buffer whose current length is
+    /// 0 bytes but whose maximum length is <i>maxlen</i> bytes.
+    /// The underlying storage will be deallocate when the last
+    /// dynbuf referring to that storage is destructed.
+    dynbuf(unsigned int maxlen) :
+        databuf(new char[maxlen], 0, maxlen), ref(new atomic(0)) {}
+
+    /// Copies a dynbuf, making another reference to <i>other</i>'s
+    /// underlying storage.
+    dynbuf(const dynbuf &other) :
+        databuf(other.dat, other.len, other.maxlen), ref(other.ref)
+    {
+        acquire();
+    }
+
+    /// Copies a dynbuf, making another reference to <i>other</i>'s
+    /// underlying storage.
+    dynbuf& operator = (const dynbuf &other) {
+        release();
+        dat = other.dat;
+        len = other.len;
+        maxlen = other.maxlen;
+        acquire();
+        return *this;
+    }
+
+    /// Deletes the underlying storage of this dynbuf if it is the
+    /// last existing copy.
+    ~dynbuf() { release(); }
+};
+
+
+/// A reference-counted I/O handle (descriptor).  An I/O handle is
+/// closed when the last remaining reference to it disappears.
+class iohandle {
+protected:
+    void set_status(const status& s) { if (rep) rep->stat = s; }
+    
+#ifndef DOXYGEN_SKIP
+
+    struct Rep {
+        int fd;
+        status stat;
+
+        Rep(int fd = -1) : fd(fd), stat(true) {}
+        ~Rep() { if (fd >= 0) close(fd); }
+    };
+    ptr<Rep> rep;
+
+#endif
+
+public:
+    /// Creates an empty handle.
+    iohandle() {}
+
+    /// Creates a handler from a file descriptor.  This should only be
+    /// invoked once per file descriptor.
+    explicit iohandle(int fd) : rep(new Rep(fd)) {}
+
+    // Use default copy constructor, assignment operator, and destructor.
+
+    /// Attempts to read bytes into a data buffer.  This call may block
+    /// if the handler has not been put into non-blocking mode.
+    ///
+    /// @return the number of bytes actually read, or -1 if no bytes are
+    ///     available or an error occurs, or 0 on end-of-stream.
+    int read(void *buf, unsigned int count) {
+	count = ::read(get_fd(), buf, count);
+
+        if ((int)count < 0)
+            set_status(status::syserr("iohandle::read"));
+        else
+            set_status(true);
+
+	return count;
+    }
+
+    /// Returns true if this iohandle is valid.
+    operator bool() const {
+	return get_fd() >= 0;
+    }
+
+    /// Reads bytes into a data buffer, retrying continually until either
+    /// end-of-stream or an error condition.  This should never be called
+    /// on a non-blocking socket because it may consume large of CPU time
+    /// waiting for bytes.
+    ///
+    /// @return if all bytes were successfully read, count; else 0.
+    int read_fully(void *buf, unsigned int count) {
+	int orig_count = count;
+	while (count) {
+	    int bytes = ::read(get_fd(), buf, count);
+
+	    if (bytes < 0 && errno == EAGAIN)
+                COREDUMP << "Called read_fully on a non-blocking socket";
+		
+	    if (bytes == 0) {
+                set_status(true);
+		return 0;
+	    }
+
+	    if (bytes < 0) {
+                set_status(status::syserr("iohandle::read_fully"));
+		return 0;
+	    }
+
+	    ASSERT(bytes <= int(count));
+	    buf = static_cast<char*>(buf) + bytes;
+	    count -= bytes;
+	}
+        set_status(true);
+	return orig_count;
+    }
+
+    /// Attempts to write bytes from a data buffer.  This call may block
+    /// if the handler has not been put into non-blocking mode.
+    ///
+    /// @return the number of bytes actually written, or -1 if no bytes can
+    ///     be written or an error occurs, or 0 on end-of-stream.
+    int write(const void *buf, int count) {
+	count = ::write(get_fd(), buf, count);
+        if (count >= 0)
+            set_status(true);
+        else
+            set_status(status::syserr("write"));
+
+	return count;
+    }
+
+    /// Writes bytes from a data buffer, retrying continually until either
+    /// end-of-stream or an error condition.  This should never be called
+    /// on a non-blocking socket because it may consume large of CPU time
+    /// waiting for bytes.
+    ///
+    /// @return if all bytes were successfully written, count; else 0.
+    int write_fully(const void *buf, unsigned int count) {
+	int orig_count = count;
+	while (count) {
+	    int bytes = ::write(get_fd(), buf, count);
+
+	    if (bytes < 0 && errno == EAGAIN)
+		COREDUMP << "Called write_fully on a non-blocking socket";
+		
+	    if (bytes == 0) {
+                set_status(true);
+		return 0;
+	    }
+
+	    if (bytes < 0) {
+                set_status(status::syserr());
+		return 0;
+	    }
+
+	    ASSERT(bytes <= int(count));
+	    buf = static_cast<const char*>(buf) + bytes;
+	    count -= bytes;
+	}
+        set_status(true);
+	return orig_count;
+    }
+
+    /// Reads up to count bytes into a data buffer, setting the
+    /// buffer's length to the number of bytes actually read.
+    ///
+    /// @return the number of bytes actually read, or -1 if no bytes are
+    ///     available or an error occurs, or 0 on end-of-stream.
+    int read(databuf buf, unsigned int count) {
+	count = read(buf.data(), count < buf.max_length() ? count : buf.max_length());
+	buf.set_length(count > 0 ? count : 0);
+	return count;
+    }
+
+    /// Reads count bytes into a data buffer, retrying continually
+    /// until either end-of-stream or an error condition.  Sets buf's
+    /// length to the number of bytes read, which is always either
+    /// count or 0.  This should never be called on a non-blocking
+    /// socket because it may consume large of CPU time waiting for
+    /// bytes.
+    ///
+    /// @return if all bytes were successfully read, count; else 0.
+    int read_fully(databuf buf, unsigned int count) {
+	count = read_fully(buf.data(), count < buf.max_length() ? count : buf.max_length());
+	buf.set_length(count);
+	return count;
+    }
+
+    /// Reads up to count bytes into a data buffer, up to the maximum
+    /// length of the buffer.  Sets the buffer's length to the number
+    /// of bytes actually read.
+    ///
+    /// @return if all bytes were successfully read, count; else 0.
+    int read(databuf buf) {
+	return read(buf, buf.max_length());
+    }
+
+    /// Fills up a data buffer, retrying continually until either
+    /// end-of-stream or an error condition.  Sets buf's length to the
+    /// number of bytes read, which is always either buf.max_length()
+    /// or 0.  This should never be called on a non-blocking socket
+    /// because it may consume large of CPU time waiting for bytes.
+    ///
+    /// @return if all bytes were successfully read, count; else 0.
+    int read_fully(databuf buf) {
+	return read_fully(buf, buf.max_length());
+    }
+
+    /// Attempts to write bytes from a data buffer.  This call may block
+    /// if the handler has not been put into non-blocking mode.
+    ///
+    /// @return the number of bytes actually written, or -1 if no bytes can
+    ///     be written or an error occurs, or 0 on end-of-stream.
+    int write(constbuf in) {
+	return write(in.data(), in.length());
+    }
+
+    /// Writes bytes from a data buffer, retrying continually until either
+    /// end-of-stream or an error condition.  This should never be called
+    /// on a non-blocking socket because it may consume large of CPU time
+    /// waiting for bytes.
+    ///
+    /// @return if all bytes were successfully written, the buffer's
+    ///     length; else 0.
+    int write_fully(constbuf in) {
+	return write_fully(in.data(), in.length());
+    }
+
+    /// Sets a handle into blocking or non-blocking mode.
+    ///
+    /// @return true if successful.
+    bool set_blocking(bool block) {
+	int flags = fcntl(get_fd(), F_GETFL);
+	if (flags < 0) {
+            set_status(status::syserr("set_blocking"));
+            return false;
+        }
+	flags = block ? flags & ~O_NONBLOCK : flags | O_NONBLOCK;
+	int ret = fcntl(get_fd(), F_SETFL, flags);
+	if (ret < 0) {
+            set_status(status::syserr("set_blocking"));
+            return false;
+        }
+	return true;
+    }
+
+    /// Returns the status of the handle.
+    status stat() const {
+	if (!rep) return "No socket";
+	return rep->stat;
+    }
+
+    /// Returns the file descriptor.
+    int get_fd() const { return rep ? rep->fd : -1; }
+
+    string as_string() const {
+	return rep ? "fd" + to_string(rep->fd) : "none";
+    }
+
+    static pair<iohandle, iohandle> pipe() {
+        int fds[2];
+        ::pipe(fds);
+        return pair<iohandle, iohandle>(iohandle(fds[0]), iohandle(fds[1]));
+    }
+};
+NMSTL_TO_STRING_INTL(iohandle);
+
+#if 0
+// Doesn't seem to work under 2.96
+
+class constbufbuf : public basic_streambuf<char, char_traits<char> > {
+    constbuf db;
+
+  public:
+    explicit constbufbuf(constbuf db) :
+	db(db)
+    {
+	char *d = const_cast<char*>(db.data());
+	setg(d, d, d + db.length());
+    }
+
+    const void *tell() const { return gptr(); }
+};
+
+class constbufstream : public basic_istream<char, char_traits<char> > {
+    constbufbuf b;
+  public:
+    explicit constbufstream(constbuf db) :
+	basic_istream<char, char_traits<char> >(0),
+	b(db)
+    {
+	init(&b);
+    }
+
+    const void *tell() const { return b.tell(); }
+};
+#endif
+
+NMSTL_NAMESPACE_END;
+
+#endif

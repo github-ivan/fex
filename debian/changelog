@@ -1,0 +1,68 @@
+fex (0.8.19) unstable; urgency=low
+
+  * fex now compiles under gcc 4.4.3
+
+ -- Krisztian Ivancso <github-ivan@ivancso.net>  Wed, 31 Oct 2012 11:38:00 +0100
+
+fex (0.8.18) unstable; urgency=low
+
+  * fex now compiles under gcc 3.4.4
+
+ -- Michael Reithinger <mreithinger@web.de>  Sun, 5 Jun 2005 19:00:00 +0200
+
+fex (0.8.17) unstable; urgency=low
+
+  * added readonly option (for one way synchronization) to configuration.
+
+ -- Michael Reithinger <mreithinger@web.de>  Tue, 11 May 2005 17:00:00 +0200
+
+fex (0.8.16) unstable; urgency=low
+
+  * bugfix backup mechanism: Diecories may now cpntain also a period.
+  * bugfix renaming directorys with inotify or dnotify works now corectly
+  * inotify: added support for inotify interface after version 0.20
+
+ -- Michael Reithinger <mreithinger@web.de>  Tue, 11 May 2005 16:00:00 +0200
+
+fex (0.8.15) unstable; urgency=low
+
+  * bugfix for backup mechanism: When a connection was aborted
+  * during reintegration, a conflicting file was backuped 
+  * multiple times.
+
+ -- Michael Reithinger <mreithinger@web.de>  Tue, 28 Feb 2005 21:56:00 +0200		
+	
+fex (0.8.14) unstable; urgency=low
+	
+  * create watchpoint directories if they don't exist
+  * new command line options -no-inotify, -no-dnotify
+  * more debug messages
+
+ -- Michael Reithinger <mreithinger@web.de>  Tue, 08 Feb 2005 16:31:25 +0200	
+
+fex (0.8.13) unstable; urgency=low
+	
+  * improved net failure robustness 
+
+ -- Michael Reithinger <mreithinger@web.de>  Mon, 27 Dec 2004 16:31:25 +0200	
+	
+fex (0.8.12) unstable; urgency=low
+
+  * improved file lock detection
+  * insert help message
+  * improved init file
+
+ -- Michael Reithinger <mreithinger@web.de>  Tue, 21 Dec 2004 21:12:31 +0200
+
+fex (0.8.11) unstable; urgency=low
+
+  * some bugfixes in the file lock mechanism
+  * removed file copy operations
+
+ -- Michael Reithinger <mreithinger@web.de>  Sun, 19 Dec 2004 21:21:31 +0200
+
+fex (0.7.9) unstable; urgency=low
+
+  * First public release.
+
+ -- Michael Reithinger <mreithinger@web.de>  Tue, 14 Dec 2004 15:41:32 +0200
